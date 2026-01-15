@@ -1,0 +1,21 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  font-family: 'Source Serif 4', serif;
+}
+
+input,
+select,
+textarea {
+  @apply text-slate-900;
+}
+
+.glass-panel {
+  @apply bg-white/10 backdrop-blur-lg border border-white/10 shadow-xl;
+}
+
+.section-title {
+  @apply text-lg font-semibold text-law-100;
+}
