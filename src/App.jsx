@@ -14,7 +14,10 @@ import {
   crimeCategories,
   intentTypes,
   punishmentTypes,
-  ukArticles
+  ukArticles,
+  getArticleOptions,
+  getPartsForArticle,
+  getPointsForArticlePart
 } from './data/ukData.js';
 
 const emptyCrime = () => ({
@@ -22,6 +25,7 @@ const emptyCrime = () => ({
   date: '',
   articleId: '',
   partId: '',
+  pointId: '',
   category: 'средней тяжести',
   intent: 'умышленное',
   realImprisonment: false
@@ -32,6 +36,7 @@ const emptyPriorCrime = () => ({
   date: '',
   articleId: '',
   partId: '',
+  pointId: '',
   category: 'средней тяжести',
   intent: 'умышленное',
   juvenile: false
@@ -126,11 +131,6 @@ const getExpungementDate = (conviction) => {
   }
 
   return addYears(endDate, getCategoryTermYears(crimeCategory, pre2013));
-};
-
-const getArticleParts = (articleId) => {
-  const article = ukArticles.find((item) => item.id === articleId);
-  return article?.parts ?? [];
 };
 
 const getPriorCrimes = (convictions) =>
@@ -398,23 +398,35 @@ export default function App() {
                         })
                       }
                       placeholder="Выберите статью"
-                      options={ukArticles.map((article) => ({
-                        value: article.id,
-                        label: article.label
-                      }))}
+                      options={getArticleOptions()}
                     />
                   </Field>
-                  <Field label="Часть/пункт">
-                    <Select
-                      value={crime.partId}
-                      onChange={(event) => updateCrime(index, { partId: event.target.value })}
-                      placeholder="Часть (если есть)"
-                      options={getArticleParts(crime.articleId).map((part) => ({
-                        value: part.id,
-                        label: part.label
-                      }))}
-                    />
-                  </Field>
+                  {crime.articleId && getPartsForArticle(crime.articleId).length > 0 && (
+                    <Field label="Часть">
+                      <Select
+                        value={crime.partId}
+                        onChange={(event) => updateCrime(index, { partId: event.target.value })}
+                        placeholder="Часть (если есть)"
+                        options={getPartsForArticle(crime.articleId).map((part) => ({
+                          value: part,
+                          label: `ч. ${part}`
+                        }))}
+                      />
+                    </Field>
+                  )}
+                  {crime.articleId && crime.partId && getPointsForArticlePart(crime.articleId, crime.partId).length > 0 && (
+                    <Field label="Пункт">
+                      <Select
+                        value={crime.pointId || ''}
+                        onChange={(event) => updateCrime(index, { pointId: event.target.value })}
+                        placeholder="Пункт (если есть)"
+                        options={getPointsForArticlePart(crime.articleId, crime.partId).map((point) => ({
+                          value: point,
+                          label: point
+                        }))}
+                      />
+                    </Field>
+                  )}
                   <Field label="Категория преступления">
                     <Select
                       value={crime.category}
@@ -582,35 +594,56 @@ export default function App() {
                                 updated[crimeIndex] = {
                                   ...crime,
                                   articleId: event.target.value,
-                                  partId: ''
+                                  partId: '',
+                                  pointId: ''
                                 };
                                 updateConviction(index, { crimes: updated });
                               }}
                               placeholder="Выберите статью"
-                              options={ukArticles.map((article) => ({
-                                value: article.id,
-                                label: article.label
-                              }))}
+                              options={getArticleOptions()}
                             />
                           </Field>
-                          <Field label="Часть/пункт">
-                            <Select
-                              value={crime.partId}
-                              onChange={(event) => {
-                                const updated = [...conviction.crimes];
-                                updated[crimeIndex] = {
-                                  ...crime,
-                                  partId: event.target.value
-                                };
-                                updateConviction(index, { crimes: updated });
-                              }}
-                              placeholder="Часть (если есть)"
-                              options={getArticleParts(crime.articleId).map((part) => ({
-                                value: part.id,
-                                label: part.label
-                              }))}
-                            />
-                          </Field>
+                          {crime.articleId && getPartsForArticle(crime.articleId).length > 0 && (
+                            <Field label="Часть">
+                              <Select
+                                value={crime.partId}
+                                onChange={(event) => {
+                                  const updated = [...conviction.crimes];
+                                  updated[crimeIndex] = {
+                                    ...crime,
+                                    partId: event.target.value,
+                                    pointId: ''
+                                  };
+                                  updateConviction(index, { crimes: updated });
+                                }}
+                                placeholder="Часть (если есть)"
+                                options={getPartsForArticle(crime.articleId).map((part) => ({
+                                  value: part,
+                                  label: `ч. ${part}`
+                                }))}
+                              />
+                            </Field>
+                          )}
+                          {crime.articleId && crime.partId && getPointsForArticlePart(crime.articleId, crime.partId).length > 0 && (
+                            <Field label="Пункт">
+                              <Select
+                                value={crime.pointId || ''}
+                                onChange={(event) => {
+                                  const updated = [...conviction.crimes];
+                                  updated[crimeIndex] = {
+                                    ...crime,
+                                    pointId: event.target.value
+                                  };
+                                  updateConviction(index, { crimes: updated });
+                                }}
+                                placeholder="Пункт (если есть)"
+                                options={getPointsForArticlePart(crime.articleId, crime.partId).map((point) => ({
+                                  value: point,
+                                  label: point
+                                }))}
+                              />
+                            </Field>
+                          )}
                           <Field label="Категория преступления">
                             <Select
                               value={crime.category}

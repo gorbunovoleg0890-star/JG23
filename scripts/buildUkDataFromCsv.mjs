@@ -111,6 +111,78 @@ function buildArticlesStructure(records) {
 // Generate helper functions code
 function generateHelperFunctions() {
   return `
+export const crimeCategories = [
+  'небольшой тяжести',
+  'средней тяжести',
+  'тяжкое',
+  'особо тяжкое'
+];
+
+export const intentTypes = ['умышленное', 'неосторожное'];
+
+export const punishmentTypes = [
+  {
+    id: 'fine',
+    label: 'Штраф',
+    primary: true,
+    additional: true
+  },
+  {
+    id: 'ban-position',
+    label: 'Лишение права занимать должности/деятельность',
+    primary: true,
+    additional: true
+  },
+  {
+    id: 'deprivation-title',
+    label: 'Лишение специального звания/наград',
+    primary: false,
+    additional: true
+  },
+  {
+    id: 'mandatory-work',
+    label: 'Обязательные работы',
+    primary: true,
+    additional: false
+  },
+  {
+    id: 'correctional-work',
+    label: 'Исправительные работы',
+    primary: true,
+    additional: false
+  },
+  {
+    id: 'military-restriction',
+    label: 'Ограничение по военной службе',
+    primary: true,
+    additional: false
+  },
+  {
+    id: 'military-service-restriction',
+    label: 'Ограничение в воинском звании',
+    primary: true,
+    additional: false
+  },
+  {
+    id: 'arrest',
+    label: 'Арест',
+    primary: true,
+    additional: false
+  },
+  {
+    id: 'imprisonment',
+    label: 'Лишение свободы',
+    primary: true,
+    additional: false
+  },
+  {
+    id: 'life-imprisonment',
+    label: 'Пожизненное лишение свободы',
+    primary: true,
+    additional: false
+  }
+];
+
 export function getArticleOptions() {
   return ukArticles.map(article => ({
     value: article.id,
