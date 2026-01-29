@@ -66,6 +66,13 @@ const emptyConviction = () => ({
 
 const formatDate = (value) => (value ? new Date(value).toLocaleDateString('ru-RU') : '');
 
+const formatArticleRef = (crime) => {
+  if (!crime?.articleId) return '—';
+  const part = crime.partId ? ` ч. ${crime.partId}` : '';
+  const point = crime.pointId ? ` п. ${crime.pointId}` : '';
+  return `ст. ${crime.articleId}${part}${point}`;
+};
+
 const addYears = (date, years) => {
   if (!date) return '';
   const next = new Date(date);
@@ -158,25 +165,37 @@ const isConvictionEligible = (entry, newCrimeDate) => {
   );
 };
 
-const getRecidivismType = (newCrime, eligibleCrimes) => {
+const getRecidivismAssessment = (newCrime, eligibleCrimes) => {
+  const pickDecisive = (list) => {
+    if (!list.length) return null;
+    const sorted = [...list].sort((a, b) => {
+      const da = getExpungementDate(a.conviction) || '9999-12-31';
+      const db = getExpungementDate(b.conviction) || '9999-12-31';
+      return db.localeCompare(da);
+    });
+    return sorted[0];
+  };
+
   if (newCrime.intent !== 'умышленное') {
     return {
       type: 'Нет рецидива',
-      reason: 'Новое преступление совершено по неосторожности (ч. 1 ст. 18 УК РФ).'
+      reason: 'Новое преступление совершено по неосторожности (ч. 1 ст. 18 УК РФ).',
+      basis: [],
+      decisive: null
     };
   }
 
   if (eligibleCrimes.length === 0) {
     return {
       type: 'Нет рецидива',
-      reason:
-        'Нет действующих судимостей за умышленные преступления средней/тяжкой категории.'
+      reason: 'Нет действующих судимостей за умышленные преступления средней/тяжкой категории.',
+      basis: [],
+      decisive: null
     };
   }
 
   const severePrior = eligibleCrimes.filter(
-    ({ crime, conviction }) =>
-      crime.category === 'тяжкое' || crime.category === 'особо тяжкое'
+    ({ crime }) => crime.category === 'тяжкое' || crime.category === 'особо тяжкое'
   );
   const mediumPrior = eligibleCrimes.filter(
     ({ crime }) => crime.category === 'средней тяжести'
@@ -191,49 +210,53 @@ const getRecidivismType = (newCrime, eligibleCrimes) => {
     ({ crime }) => crime.category === 'тяжкое'
   );
 
-  if (
-    newCrime.category === 'тяжкое' &&
-    newCrime.realImprisonment &&
-    heavyImprisonmentPrior.length >= 2
-  ) {
+  if (newCrime.category === 'тяжкое' && newCrime.realImprisonment && heavyImprisonmentPrior.length >= 2) {
+    const basis = heavyImprisonmentPrior.slice(0, 2);
     return {
       type: 'Особо опасный рецидив',
-      reason: 'Два и более тяжких умышленных преступления с реальным лишением свободы (ч. 3 ст. 18 УК РФ).'
+      reason: 'Два и более тяжких умышленных преступления с реальным лишением свободы (ч. 3 ст. 18 УК РФ).',
+      basis,
+      decisive: pickDecisive(basis)
     };
   }
 
-  if (
-    newCrime.category === 'особо тяжкое' &&
-    (heavyImprisonmentPrior.length >= 2 || severeImprisonmentPrior.length >= 1)
-  ) {
+  if (newCrime.category === 'особо тяжкое' && (heavyImprisonmentPrior.length >= 2 || severeImprisonmentPrior.length >= 1)) {
+    const basis = severeImprisonmentPrior.length ? severeImprisonmentPrior.slice(0, 1) : heavyImprisonmentPrior.slice(0, 2);
     return {
       type: 'Особо опасный рецидив',
-      reason: 'Особо тяжкое новое преступление и тяжкие/особо тяжкие судимости (ч. 3 ст. 18 УК РФ).'
+      reason: 'Особо тяжкое новое преступление и тяжкие/особо тяжкие судимости (ч. 3 ст. 18 УК РФ).',
+      basis,
+      decisive: pickDecisive(basis)
     };
   }
 
-  if (
-    newCrime.category === 'тяжкое' &&
-    newCrime.realImprisonment &&
-    mediumPrior.length >= 2 &&
-    realImprisonmentPrior.length >= 2
-  ) {
+  if (newCrime.category === 'тяжкое' && newCrime.realImprisonment && mediumPrior.length >= 2 && realImprisonmentPrior.length >= 2) {
+    const mediumImprisonment = realImprisonmentPrior.filter(({ crime }) => crime.category === 'средней тяжести');
+    const basis = mediumImprisonment.slice(0, 2).length ? mediumImprisonment.slice(0, 2) : realImprisonmentPrior.slice(0, 2);
     return {
       type: 'Опасный рецидив',
-      reason: 'Два и более умышленных преступления средней тяжести с лишением свободы (ч. 2 ст. 18 УК РФ).'
+      reason: 'Два и более умышленных преступления средней тяжести с лишением свободы (ч. 2 ст. 18 УК РФ).',
+      basis,
+      decisive: pickDecisive(basis)
     };
   }
 
   if (newCrime.category === 'тяжкое' && severePrior.length >= 1) {
+    const basis = severePrior.slice(0, 1);
     return {
       type: 'Опасный рецидив',
-      reason: 'Новое тяжкое преступление при наличии тяжкой/особо тяжкой судимости (ч. 2 ст. 18 УК РФ).'
+      reason: 'Новое тяжкое преступление при наличии тяжкой/особо тяжкой судимости (ч. 2 ст. 18 УК РФ).',
+      basis,
+      decisive: pickDecisive(basis)
     };
   }
 
+  const basis = [pickDecisive(eligibleCrimes)].filter(Boolean);
   return {
     type: 'Простой рецидив',
-    reason: 'Наличие действующей судимости за умышленное преступление (ч. 1 ст. 18 УК РФ).'
+    reason: 'Наличие действующей судимости за умышленное преступление (ч. 1 ст. 18 УК РФ).',
+    basis,
+    decisive: pickDecisive(basis)
   };
 };
 
@@ -284,16 +307,19 @@ export default function App() {
 
   const priorCrimes = useMemo(() => getPriorCrimes(convictions), [convictions]);
 
+  const convictionNumberById = useMemo(() => {
+    const map = new Map();
+    convictions.forEach((c, idx) => map.set(c.id, idx + 1));
+    return map;
+  }, [convictions]);
+
   const recidivismReport = useMemo(() => {
     return newCrimes.map((crime) => {
       const eligible = priorCrimes.filter((entry) => isConvictionEligible(entry, crime.date));
-      return {
-        crime,
-        eligible,
-        assessment: getRecidivismType(crime, eligible)
-      };
+      const assessment = getRecidivismAssessment(crime, eligible);
+      return { crime, eligible, assessment };
     });
-  }, [newCrimes, priorCrimes]);
+  }, [newCrimes, priorCrimes, convictions, convictionNumberById]);
 
   const updateCrime = (index, updates) => {
     setNewCrimes((prev) =>
@@ -1054,7 +1080,7 @@ export default function App() {
                       Преступление №{index + 1}
                     </h3>
                     <p className="text-xs text-law-100/80">
-                      Дата: {formatDate(entry.crime.date)} · Статья: {entry.crime.articleId || '—'}
+                      Дата: {formatDate(entry.crime.date)} · Статья: {formatArticleRef(entry.crime)}
                     </p>
                   </div>
                   <span className="rounded-full bg-law-200/30 px-3 py-1 text-xs text-white">
@@ -1065,6 +1091,38 @@ export default function App() {
                 <div className="mt-4 text-xs text-law-100/70">
                   Судимости, учитываемые в расчете: {entry.eligible.length || 'нет'}
                 </div>
+                {entry.assessment.decisive && (
+                  <div className="mt-3 text-xs text-law-100/80">
+                    <div className="font-semibold">Определяющий приговор:</div>
+                    <div>
+                      Приговор №{convictionNumberById.get(entry.assessment.decisive.conviction.id) ?? '—'}
+                      {entry.assessment.decisive.conviction.verdictDate
+                        ? ` от ${formatDate(entry.assessment.decisive.conviction.verdictDate)}`
+                        : ''}
+                      {' — '}
+                      {formatArticleRef(entry.assessment.decisive.crime)}
+                      {' — '}
+                      погашение: {formatDate(getExpungementDate(entry.assessment.decisive.conviction)) || '—'}
+                    </div>
+                  </div>
+                )}
+                {entry.assessment.basis?.length > 0 && (
+                  <div className="mt-3 text-xs text-law-100/80">
+                    <div className="font-semibold">Основание (какие приговоры учтены):</div>
+                    <ul className="mt-1 list-disc pl-5 space-y-1">
+                      {entry.assessment.basis.map((b) => (
+                        <li key={`${b.conviction.id}-${b.crime.id}`}>
+                          Приговор №{convictionNumberById.get(b.conviction.id) ?? '—'}
+                          {b.conviction.verdictDate ? ` от ${formatDate(b.conviction.verdictDate)}` : ''}
+                          {' — '}
+                          {formatArticleRef(b.crime)}
+                          {' — '}
+                          погашение: {formatDate(getExpungementDate(b.conviction)) || '—'}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
             ))}
           </div>
