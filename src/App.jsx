@@ -164,11 +164,18 @@ const isConvictionEligible = (entry, newCrimeDate) => {
   );
 };
 
-const getConvictionRecidivismStatus = (conviction, newCrimeDate, merged) => {
+const getConvictionRecidivismStatus = (conviction, newCrimeDate, mergeGroups) => {
+  // Найти группу, в которой находится эта судимость
+  const groupWithConviction = mergeGroups?.find(g => 
+    g.parentId === conviction.id || g.selectedIds.includes(conviction.id)
+  );
+
   let expungementDate;
-  if (merged?.enabled && merged.parentId === conviction.id) {
-    expungementDate = getExpungementDate({ ...conviction, punishment: merged.mergedPunishment });
+  if (groupWithConviction && groupWithConviction.parentId === conviction.id) {
+    // Это основной приговор - использовать соединённое наказание
+    expungementDate = getExpungementDate({ ...conviction, punishment: groupWithConviction.mergedPunishment });
   } else {
+    // Обычный приговор или судимость в группе - использовать свой срок
     expungementDate = getExpungementDate(conviction);
   }
   const isActive = !expungementDate || newCrimeDate < expungementDate;
@@ -178,7 +185,8 @@ const getConvictionRecidivismStatus = (conviction, newCrimeDate, merged) => {
     return {
       eligible: false,
       reason: 'Рецидив не установлен: судимость погашена на дату нового преступления.',
-      expungementDate
+      expungementDate,
+      groupId: groupWithConviction?.id
     };
   }
 
@@ -190,7 +198,8 @@ const getConvictionRecidivismStatus = (conviction, newCrimeDate, merged) => {
     return {
       eligible: false,
       reason: 'Не учитывается для рецидива: преступление совершено до 18 лет.',
-      expungementDate
+      expungementDate,
+      groupId: groupWithConviction?.id
     };
   }
 
@@ -199,7 +208,8 @@ const getConvictionRecidivismStatus = (conviction, newCrimeDate, merged) => {
     return {
       eligible: false,
       reason: 'Не учитывается для рецидива: неумышленное преступление.',
-      expungementDate
+      expungementDate,
+      groupId: groupWithConviction?.id
     };
   }
 
@@ -208,7 +218,8 @@ const getConvictionRecidivismStatus = (conviction, newCrimeDate, merged) => {
     return {
       eligible: false,
       reason: 'Не учитывается для рецидива: преступление небольшой тяжести.',
-      expungementDate
+      expungementDate,
+      groupId: groupWithConviction?.id
     };
   }
 
@@ -217,7 +228,8 @@ const getConvictionRecidivismStatus = (conviction, newCrimeDate, merged) => {
     return {
       eligible: false,
       reason: 'Не учитывается для рецидива: условное осуждение не отменено.',
-      expungementDate
+      expungementDate,
+      groupId: groupWithConviction?.id
     };
   }
 
@@ -226,7 +238,8 @@ const getConvictionRecidivismStatus = (conviction, newCrimeDate, merged) => {
     return {
       eligible: false,
       reason: 'Не учитывается для рецидива: отсрочка не отменена.',
-      expungementDate
+      expungementDate,
+      groupId: groupWithConviction?.id
     };
   }
 
@@ -234,7 +247,8 @@ const getConvictionRecidivismStatus = (conviction, newCrimeDate, merged) => {
   return {
     eligible: true,
     reason: 'Учитывается.',
-    expungementDate
+    expungementDate,
+    groupId: groupWithConviction?.id
   };
 };
 
@@ -360,13 +374,61 @@ export default function App() {
   const [birthDate, setBirthDate] = useState('');
   const [newCrimes, setNewCrimes] = useState([emptyCrime()]);
   const [convictions, setConvictions] = useState([emptyConviction()]);
-  const [merged, setMerged] = useState({
+  const [mergeGroups, setMergeGroups] = useState([]);
+  const [creatingGroup, setCreatingGroup] = useState({
     enabled: false,
     basis: 'ч. 5 ст. 69 УК РФ',
     selectedIds: [],
-    parentId: '',
-    mergedPunishment: emptyPunishment()
+    parentId: ''
   });
+
+  // Helpers for merge group management
+  const getConvictionGroupId = (convictionId) => {
+    return mergeGroups.find(g => g.selectedIds.includes(convictionId) || g.parentId === convictionId)?.id;
+  };
+
+  const isConvictionInGroup = (convictionId) => {
+    return !!getConvictionGroupId(convictionId);
+  };
+
+  const isConvictionParentOfGroup = (convictionId) => {
+    return mergeGroups.some(g => g.parentId === convictionId);
+  };
+
+  const isConvictionChildOfGroup = (convictionId) => {
+    return mergeGroups.some(g => g.selectedIds.includes(convictionId));
+  };
+
+  const addMergeGroup = () => {
+    if (creatingGroup.selectedIds.length < 2 || !creatingGroup.parentId) return;
+    const newGroup = {
+      id: crypto.randomUUID(),
+      basis: creatingGroup.basis,
+      selectedIds: creatingGroup.selectedIds,
+      parentId: creatingGroup.parentId,
+      mergedPunishment: emptyPunishment(),
+      createdAt: new Date().toISOString()
+    };
+    setMergeGroups([...mergeGroups, newGroup]);
+    setCreatingGroup({
+      enabled: false,
+      basis: 'ч. 5 ст. 69 УК РФ',
+      selectedIds: [],
+      parentId: ''
+    });
+  };
+
+  const removeMergeGroup = (groupId) => {
+    setMergeGroups(mergeGroups.filter(g => g.id !== groupId));
+  };
+
+  const updateGroupMergedPunishment = (groupId, field, value) => {
+    setMergeGroups(mergeGroups.map(g =>
+      g.id === groupId
+        ? { ...g, mergedPunishment: { ...g.mergedPunishment, [field]: value } }
+        : g
+    ));
+  };
 
   const priorCrimes = useMemo(() => getPriorCrimes(convictions), [convictions]);
 
@@ -380,27 +442,30 @@ export default function App() {
     return newCrimes.map((crime) => {
       const eligible = priorCrimes.filter((entry) => {
         const cid = entry.conviction.id;
-        if (merged.enabled && merged.selectedIds.includes(cid) && cid !== merged.parentId) return false;
+        // Исключить судимости, которые являются судимостями "влившихся" приговоров в соединениях
+        const isChild = mergeGroups.some(g => g.selectedIds.includes(cid) && g.parentId !== cid);
+        if (isChild) return false;
         return isConvictionEligible(entry, crime.date);
       });
       const assessment = getRecidivismAssessment(crime, eligible);
 
       // Для каждого приговора в convictions сформировать статус
       const perConviction = convictions.map((conviction, idx) => {
-        const status = getConvictionRecidivismStatus(conviction, crime.date, merged);
+        const status = getConvictionRecidivismStatus(conviction, crime.date, mergeGroups);
         return {
           convictionIndex: idx,
           convictionId: conviction.id,
           verdictDate: conviction.verdictDate,
           expungementDate: status.expungementDate,
           eligible: status.eligible,
-          reason: status.reason
+          reason: status.reason,
+          groupId: status.groupId
         };
       });
 
       return { crime, eligible, assessment, perConviction };
     });
-  }, [newCrimes, priorCrimes, convictions, merged]);
+  }, [newCrimes, priorCrimes, convictions, mergeGroups]);
 
   const updateCrime = (index, updates) => {
     setNewCrimes((prev) =>
@@ -592,10 +657,12 @@ export default function App() {
         <SectionCard title="IV. Судимости по предыдущим приговорам" icon={FileText}>
           <div className="space-y-6">
             {convictions.map((conviction, index) => {
-              const isChild = merged.enabled && merged.selectedIds.includes(conviction.id) && conviction.id !== merged.parentId;
-              const isParent = merged.enabled && merged.parentId === conviction.id;
+              const convictionGroup = mergeGroups.find(g => g.parentId === conviction.id || g.selectedIds.includes(conviction.id));
+              const isParent = !!convictionGroup && convictionGroup.parentId === conviction.id;
+              const isChild = !!convictionGroup && convictionGroup.selectedIds.includes(conviction.id) && conviction.id !== convictionGroup.parentId;
+              
               const expungementDate = isParent
-                ? getExpungementDate({ ...conviction, punishment: merged.mergedPunishment })
+                ? getExpungementDate({ ...conviction, punishment: convictionGroup.mergedPunishment })
                 : getExpungementDate(conviction);
 
               return (
@@ -603,10 +670,10 @@ export default function App() {
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <h3 className="text-sm font-semibold text-white">Приговор №{index + 1}</h3>
                     {isParent && (
-                      <span className="ml-3 inline-block rounded-full bg-accent-500/20 px-2 py-1 text-xs text-accent-200">Основной (соединённый)</span>
+                      <span className="ml-3 inline-block rounded-full bg-accent-500/20 px-2 py-1 text-xs text-accent-200">Основной (соединённый) — группа №{mergeGroups.indexOf(convictionGroup) + 1}</span>
                     )}
                     {isChild && (
-                      <span className="ml-3 inline-block rounded-full bg-law-200/20 px-2 py-1 text-xs text-law-100">Влившийся (соединён)</span>
+                      <span className="ml-3 inline-block rounded-full bg-law-200/20 px-2 py-1 text-xs text-law-100">Влившийся — группа №{mergeGroups.indexOf(convictionGroup) + 1}</span>
                     )}
                     {convictions.length > 1 && (
                       <button
@@ -947,7 +1014,7 @@ export default function App() {
                     ) : (
                       <div className="rounded-2xl border border-white/10 bg-white/10 p-4 space-y-4">
                         <div className="text-xs text-law-100/80">
-                          {merged.basis && merged.basis.includes('70') ? (
+                          {convictionGroup && convictionGroup.basis && convictionGroup.basis.includes('70') ? (
                             'Дата погашения по приговору не рассчитывается: наказание вошло в соединение (ст.70), отдельные даты исполнения не введены.'
                           ) : (
                             'Влившийся приговор: наказание включено в соединение и не учитывается отдельно для расчёта.'
@@ -1014,22 +1081,22 @@ export default function App() {
                     </div>
                   </div>
 
-                  {merged.enabled && merged.basis && merged.basis.includes('70') && merged.parentId && (
+                  {convictionGroup && convictionGroup.parentId === conviction.id && convictionGroup.basis && convictionGroup.basis.includes('70') && (
                     <div className="mt-3 rounded-xl border border-white/10 bg-white/5 p-3 text-xs text-law-100/80">
                       <div className="font-semibold">Для вводной части</div>
                       <div className="mt-1">
                         {(() => {
-                          const parent = convictions.find((c) => c.id === merged.parentId);
-                          const children = convictions.filter((c) => merged.selectedIds.includes(c.id) && c.id !== merged.parentId);
+                          const parent = conviction;
+                          const children = convictions.filter((c) => convictionGroup.selectedIds.includes(c.id) && c.id !== convictionGroup.parentId);
                           if (!parent) return null;
                           return (
                             <div>
-                              Судим по приговору №{convictionNumberById.get(parent.id) ?? '—'}{parent.verdictDate ? ` от ${formatDate(parent.verdictDate)}` : ''} (основной, {merged.basis}), с ним соединён{children.length > 1 ? 'ы' : ''} {children.map((ch, i) => (
+                              Судим по приговору №{convictionNumberById.get(parent.id) ?? '—'}{parent.verdictDate ? ` от ${formatDate(parent.verdictDate)}` : ''} (основной, {convictionGroup.basis}), с ним соединён{children.length > 1 ? 'ы' : ''} {children.map((ch, i) => (
                                 <span key={ch.id}>приговор №{convictionNumberById.get(ch.id) ?? '—'}{ch.verdictDate ? ` от ${formatDate(ch.verdictDate)}` : ''}{i < children.length - 1 ? ', ' : ''}</span>
                               ))} — {children.map((ch, i) => {
                                 const ed = getExpungementDate(ch);
                                 return (
-                                  <span key={ch.id}>судимость по нему {ed && ed < entry.crime.date ? 'погашена' : 'не погашена'}{ed ? ` (погашение: ${formatDate(ed)})` : ''}{i < children.length - 1 ? '; ' : ''}</span>
+                                  <span key={ch.id}>судимость по нему {ed && ed < new Date() ? 'погашена' : 'не погашена'}{ed ? ` (погашение: ${formatDate(ed)})` : ''}{i < children.length - 1 ? '; ' : ''}</span>
                                 );
                               })}
                             </div>
@@ -1050,30 +1117,16 @@ export default function App() {
 
             <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-4">
               <h3 className="text-sm font-semibold text-white">Соединение приговоров</h3>
-              <div className="grid gap-4 md:grid-cols-3">
-                <Field label="Есть соединение">
-                  <select
-                    value={merged.enabled ? 'yes' : 'no'}
-                    onChange={(event) => {
-                      const yes = event.target.value === 'yes';
-                      setMerged((prev) => ({
-                        ...prev,
-                        enabled: yes,
-                        // при выключении очищаем выбор
-                        ...(yes ? {} : { selectedIds: [], parentId: '' })
-                      }));
-                    }}
-                    className="rounded-xl border border-law-200/40 bg-white px-3 py-2 text-sm"
-                  >
-                    <option value="no">Нет</option>
-                    <option value="yes">Да</option>
-                  </select>
-                </Field>
+              
+              {/* Форма создания нового соединения */}
+              <div className="rounded-2xl border border-law-200/30 bg-law-200/10 p-4 space-y-4">
+                <h4 className="text-sm font-semibold text-law-100">Создать новое соединение</h4>
+                
                 <Field label="Основание соединения">
                   <Select
-                    value={merged.basis}
+                    value={creatingGroup.basis}
                     onChange={(event) =>
-                      setMerged((prev) => ({ ...prev, basis: event.target.value }))
+                      setCreatingGroup((prev) => ({ ...prev, basis: event.target.value }))
                     }
                     placeholder="Основание"
                     options={[
@@ -1083,154 +1136,185 @@ export default function App() {
                     ]}
                   />
                 </Field>
-                <div />
+
+                <div>
+                  <div className="text-sm font-semibold text-white mb-2">Выберите приговоры</div>
+                  <div className="space-y-2">
+                    {convictions.map((c, idx) => {
+                      const inAnotherGroup = mergeGroups.some(g => g.selectedIds.includes(c.id) || g.parentId === c.id);
+                      return (
+                        <label key={c.id} className="flex items-center gap-3 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={creatingGroup.selectedIds.includes(c.id)}
+                            disabled={inAnotherGroup}
+                            onChange={() =>
+                              setCreatingGroup((prev) => {
+                                const exists = prev.selectedIds.includes(c.id);
+                                const next = exists
+                                  ? prev.selectedIds.filter((id) => id !== c.id)
+                                  : [...prev.selectedIds, c.id];
+                                return { ...prev, selectedIds: next };
+                              })
+                            }
+                          />
+                          <span className={`text-xs ${inAnotherGroup ? 'text-law-100/40' : 'text-law-100/90'}`}>
+                            Приговор №{idx + 1}{c.verdictDate ? ` от ${formatDate(c.verdictDate)}` : ' (дата не указана)'}
+                            {inAnotherGroup && ' (используется в другом соединении)'}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {creatingGroup.selectedIds.length >= 2 && (
+                  <div>
+                    <Field label="Основной приговор">
+                      <select
+                        value={creatingGroup.parentId}
+                        onChange={(e) => setCreatingGroup((prev) => ({ ...prev, parentId: e.target.value }))}
+                        className="rounded-xl border border-law-200/40 bg-white px-3 py-2 text-sm"
+                      >
+                        <option value="">Выберите основной</option>
+                        {convictions
+                          .filter((c) => creatingGroup.selectedIds.includes(c.id))
+                          .map((c) => (
+                            <option key={c.id} value={c.id}>
+                              Приговор №{convictionNumberById.get(c.id) ?? '—'}{c.verdictDate ? ` от ${formatDate(c.verdictDate)}` : ''}
+                            </option>
+                          ))}
+                      </select>
+                    </Field>
+                  </div>
+                )}
+
+                <div className="flex gap-3">
+                  <button
+                    className="flex items-center gap-2 rounded-xl border border-law-200/50 bg-law-200/20 px-4 py-2 text-sm text-law-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                    onClick={addMergeGroup}
+                    disabled={creatingGroup.selectedIds.length < 2 || !creatingGroup.parentId}
+                  >
+                    <Plus className="h-4 w-4" /> Добавить соединение
+                  </button>
+                  <button
+                    className="flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-sm text-law-100/70"
+                    onClick={() => setCreatingGroup({
+                      enabled: false,
+                      basis: 'ч. 5 ст. 69 УК РФ',
+                      selectedIds: [],
+                      parentId: ''
+                    })}
+                  >
+                    Очистить
+                  </button>
+                </div>
+
+                {creatingGroup.selectedIds.length >= 2 && !creatingGroup.parentId && (
+                  <div className="text-xs text-red-200">
+                    Требуется выбрать основной приговор
+                  </div>
+                )}
               </div>
 
-              {/* Выбор приговоров */}
-              {merged.enabled && (
-                <div className="mt-4 space-y-3">
-                  <div className="text-sm font-semibold text-white">Выберите приговоры для соединения</div>
-                  <div className="text-xs text-law-100/80">Выберите минимум 2 приговора и отметьте основной.</div>
-                  <div className="space-y-2">
-                    {convictions.map((c, idx) => (
-                      <label key={c.id} className="flex items-center gap-3 text-sm">
-                        <input
-                          type="checkbox"
-                          checked={merged.selectedIds.includes(c.id)}
-                          onChange={() =>
-                            setMerged((prev) => {
-                              const exists = prev.selectedIds.includes(c.id);
-                              const next = exists
-                                ? prev.selectedIds.filter((id) => id !== c.id)
-                                : [...prev.selectedIds, c.id];
-                              const parentOk = next.includes(prev.parentId) ? prev.parentId : (next[0] || '');
-                              return { ...prev, selectedIds: next, parentId: parentOk };
-                            })
-                          }
-                        />
-                        <span className="text-xs text-law-100/90">Приговор №{idx + 1}{c.verdictDate ? ` от ${formatDate(c.verdictDate)}` : ' (дата не указана)'}</span>
-                      </label>
-                    ))}
-                  </div>
+              {/* Список существующих соединений */}
+              {mergeGroups.length > 0 && (
+                <div className="space-y-3">
+                  <h4 className="text-sm font-semibold text-white">Существующие соединения ({mergeGroups.length})</h4>
+                  {mergeGroups.map((group, groupIdx) => {
+                    const parentConv = convictions.find((c) => c.id === group.parentId);
+                    const childConvs = convictions.filter((c) => group.selectedIds.includes(c.id) && c.id !== group.parentId);
+                    
+                    return (
+                      <div key={group.id} className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <h5 className="text-sm font-semibold text-white">Группа №{groupIdx + 1} ({group.basis})</h5>
+                            <p className="text-xs text-law-100/80 mt-1">
+                              Основной: Приговор №{parentConv ? convictionNumberById.get(parentConv.id) : '?'}{parentConv?.verdictDate ? ` от ${formatDate(parentConv.verdictDate)}` : ''}
+                            </p>
+                          </div>
+                          <button
+                            className="flex items-center gap-2 text-xs text-red-200"
+                            onClick={() => removeMergeGroup(group.id)}
+                          >
+                            <Trash2 className="h-4 w-4" /> Удалить
+                          </button>
+                        </div>
 
-                  {merged.selectedIds.length >= 2 && (
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <Field label="Основной приговор (после соединения)">
-                        <select
-                          value={merged.parentId}
-                          onChange={(e) => setMerged((prev) => ({ ...prev, parentId: e.target.value }))}
-                          className="rounded-xl border border-law-200/40 bg-white px-3 py-2 text-sm"
-                        >
-                          <option value="">Выберите основной</option>
-                          {convictions
-                            .filter((c) => merged.selectedIds.includes(c.id))
-                            .map((c) => (
-                              <option key={c.id} value={c.id}>
-                                Приговор №{convictionNumberById.get(c.id) ?? '—'}{c.verdictDate ? ` от ${formatDate(c.verdictDate)}` : ''}
-                              </option>
-                            ))}
-                        </select>
-                      </Field>
-                      <div className="flex items-end gap-3">
-                        <button
-                          className="flex items-center gap-2 rounded-xl border border-law-200/50 bg-law-200/20 px-4 py-2 text-sm text-law-100"
-                          onClick={() =>
-                            setMerged((prev) => {
-                              const parentId = prev.parentId || prev.selectedIds[0] || '';
-                              const parentConv = convictions.find((c) => c.id === parentId);
-                              const mergedPun = parentConv && !prev.mergedPunishment.mainEndDate
-                                ? parentConv.punishment
-                                : prev.mergedPunishment;
-                              return { ...prev, enabled: true, parentId, mergedPunishment: mergedPun };
-                            })
-                          }
-                          disabled={merged.selectedIds.length < 2 || !merged.parentId}
-                        >
-                          Сформировать соединённый приговор
-                        </button>
-                        <button
-                          className="flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-sm text-law-100/70"
-                          onClick={() => setMerged((prev) => ({ ...prev, enabled: false }))}
-                        >
-                          Отменить
-                        </button>
-                      </div>
-                    </div>
-                  )}
+                        <div className="text-xs text-law-100/80">
+                          <div className="font-semibold mb-1">Влившиеся приговоры:</div>
+                          {childConvs.map((c) => (
+                            <div key={c.id}>
+                              • Приговор №{convictionNumberById.get(c.id)}{c.verdictDate ? ` от ${formatDate(c.verdictDate)}` : ''}
+                            </div>
+                          ))}
+                        </div>
 
-                  {merged.enabled && (
-                    <div className="rounded-2xl border border-white/10 bg-white/10 p-4 space-y-3 mt-3">
-                      <h4 className="text-sm font-semibold text-law-100">Соединённый приговор</h4>
-                      <div className="grid gap-4 md:grid-cols-2">
-                        <Field label="Основное наказание">
-                          <Select
-                            value={merged.mergedPunishment.mainType}
-                            onChange={(event) =>
-                              setMerged((prev) => ({
-                                ...prev,
-                                mergedPunishment: {
-                                  ...prev.mergedPunishment,
-                                  mainType: event.target.value
+                        <div className="rounded-2xl border border-white/10 bg-white/10 p-3 space-y-2">
+                          <h6 className="text-xs font-semibold text-law-100">Соединённое наказание</h6>
+                          <div className="grid gap-2 md:grid-cols-2">
+                            <div>
+                              <label className="text-xs font-semibold text-law-100 block mb-2">Основное наказание</label>
+                              <Select
+                                value={group.mergedPunishment.mainType}
+                                onChange={(event) =>
+                                  updateGroupMergedPunishment(group.id, 'mainType', event.target.value)
                                 }
-                              }))
-                            }
-                            placeholder="Вид наказания"
-                            options={punishmentTypes
-                              .filter((item) => item.primary)
-                              .map((item) => ({ value: item.id, label: item.label }))}
-                          />
-                        </Field>
-                        <Field label="Дата отбытия основного">
-                          <input
-                            type="date"
-                            value={merged.mergedPunishment.mainEndDate}
-                            onChange={(event) =>
-                              setMerged((prev) => ({
-                                ...prev,
-                                mergedPunishment: { ...prev.mergedPunishment, mainEndDate: event.target.value }
-                              }))
-                            }
-                            className="rounded-xl border border-law-200/40 bg-white px-3 py-2 text-sm"
-                          />
-                        </Field>
+                                placeholder="Вид наказания"
+                                options={punishmentTypes
+                                  .filter((item) => item.primary)
+                                  .map((item) => ({ value: item.id, label: item.label }))}
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs font-semibold text-law-100 block mb-2">Дата отбытия</label>
+                              <input
+                                type="date"
+                                value={group.mergedPunishment.mainEndDate}
+                                onChange={(event) =>
+                                  updateGroupMergedPunishment(group.id, 'mainEndDate', event.target.value)
+                                }
+                                className="rounded-xl border border-law-200/40 bg-white px-3 py-2 text-sm w-full"
+                              />
+                            </div>
+                          </div>
+                          <div className="grid gap-2 md:grid-cols-2">
+                            <div>
+                              <label className="text-xs font-semibold text-law-100 block mb-2">Доп. наказание</label>
+                              <Select
+                                value={group.mergedPunishment.additionalType}
+                                onChange={(event) =>
+                                  updateGroupMergedPunishment(group.id, 'additionalType', event.target.value)
+                                }
+                                placeholder="Доп. наказание"
+                                options={punishmentTypes.filter((item) => item.additional).map((item) => ({ value: item.id, label: item.label }))}
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs font-semibold text-law-100 block mb-2">Дата отбытия</label>
+                              <input
+                                type="date"
+                                value={group.mergedPunishment.additionalEndDate}
+                                onChange={(event) =>
+                                  updateGroupMergedPunishment(group.id, 'additionalEndDate', event.target.value)
+                                }
+                                className="rounded-xl border border-law-200/40 bg-white px-3 py-2 text-sm w-full"
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="text-xs text-law-100/80">
+                          {group.basis.includes('70') ? (
+                            <div>По ст.70: при определении рецидива будет учитываться основной приговор.</div>
+                          ) : (
+                            <div>При соединении по совокупности (ч.5 ст.69) влившиеся приговоры не учитываются отдельно.</div>
+                          )}
+                        </div>
                       </div>
-                      <div className="grid gap-4 md:grid-cols-2">
-                        <Field label="Доп. наказание">
-                          <Select
-                            value={merged.mergedPunishment.additionalType}
-                            onChange={(event) =>
-                              setMerged((prev) => ({
-                                ...prev,
-                                mergedPunishment: { ...prev.mergedPunishment, additionalType: event.target.value }
-                              }))
-                            }
-                            placeholder="Доп. наказание"
-                            options={punishmentTypes.filter((item) => item.additional).map((item) => ({ value: item.id, label: item.label }))}
-                          />
-                        </Field>
-                        <Field label="Дата отбытия доп. наказания">
-                          <input
-                            type="date"
-                            value={merged.mergedPunishment.additionalEndDate}
-                            onChange={(event) =>
-                              setMerged((prev) => ({
-                                ...prev,
-                                mergedPunishment: { ...prev.mergedPunishment, additionalEndDate: event.target.value }
-                              }))
-                            }
-                            className="rounded-xl border border-law-200/40 bg-white px-3 py-2 text-sm"
-                          />
-                        </Field>
-                      </div>
-                      <div className="text-xs text-law-100/80">
-                        {merged.basis && merged.basis.includes('70') ? (
-                          <div>По ст.70: при определении рецидива и дате погашения будет учитываться основной приговор.</div>
-                        ) : (
-                          <div>При соединении по совокупности (ч.5 ст.69) влившиеся приговоры не учитываются отдельно.</div>
-                        )}
-                      </div>
-                    </div>
-                  )}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -1270,8 +1354,9 @@ export default function App() {
                   <h4 className="text-sm font-semibold text-white mb-4">Анализ по приговорам</h4>
                   <div className="space-y-3">
                     {entry.perConviction.map((conv) => {
-                      const isParent = merged.enabled && merged.parentId === conv.convictionId;
-                      const isChild = merged.enabled && merged.selectedIds.includes(conv.convictionId) && conv.convictionId !== merged.parentId;
+                      const convictionGroup = mergeGroups.find(g => g.parentId === conv.convictionId || g.selectedIds.includes(conv.convictionId));
+                      const isParent = !!convictionGroup && convictionGroup.parentId === conv.convictionId;
+                      const isChild = !!convictionGroup && convictionGroup.selectedIds.includes(conv.convictionId) && conv.convictionId !== convictionGroup.parentId;
                       return (
                         <div key={conv.convictionId} className="rounded-xl border border-white/10 bg-white/10 p-3 text-xs text-law-100/80">
                           <div className="flex items-center justify-between">
@@ -1280,15 +1365,15 @@ export default function App() {
                               {conv.verdictDate ? ` от ${formatDate(conv.verdictDate)}` : ''}
                             </div>
                             <div>
-                              {isParent && <span className="inline-block rounded-full bg-accent-500/20 px-2 py-1 text-xs text-accent-200">Основной</span>}
-                              {isChild && <span className="inline-block rounded-full bg-law-200/20 px-2 py-1 text-xs text-law-100 ml-2">Влившийся</span>}
+                              {isParent && <span className="inline-block rounded-full bg-accent-500/20 px-2 py-1 text-xs text-accent-200">Основной (соединённый) — группа №{mergeGroups.indexOf(convictionGroup) + 1}</span>}
+                              {isChild && <span className="inline-block rounded-full bg-law-200/20 px-2 py-1 text-xs text-law-100 ml-2">Влившийся — группа №{mergeGroups.indexOf(convictionGroup) + 1}</span>}
                             </div>
                           </div>
                           <div className="mt-1">Дата погашения судимости: {formatDate(conv.expungementDate) || '—'}</div>
                           <div className="mt-2 text-law-100/70">{conv.reason}</div>
                           <div className="mt-2 text-law-100/70">
                             {isChild ? (
-                              <div>Роль: не учитывается отдельно (вошёл в соединение по {merged.basis}{merged.parentId ? ` с приговором №${convictionNumberById.get(merged.parentId)}` : ''}).</div>
+                              <div>Роль: не учитывается отдельно (вошёл в соединение по {convictionGroup.basis}{convictionGroup.parentId ? ` с приговором №${convictionNumberById.get(convictionGroup.parentId)}` : ''}).</div>
                             ) : (
                               <div>Роль: {conv.eligible ? 'учитывается' : 'не учитывается'}</div>
                             )}
