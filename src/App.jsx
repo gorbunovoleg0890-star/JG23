@@ -27,8 +27,7 @@ const emptyCrime = () => ({
   partId: '',
   pointId: '',
   category: 'средней тяжести',
-  intent: 'умышленное',
-  realImprisonment: false
+  intent: 'умышленное'
 });
 
 const emptyPriorCrime = () => ({
@@ -165,23 +164,98 @@ const isConvictionEligible = (entry, newCrimeDate) => {
   );
 };
 
+const getConvictionRecidivismStatus = (conviction, newCrimeDate, merged) => {
+  let expungementDate;
+  if (merged?.enabled && merged.parentId === conviction.id) {
+    expungementDate = getExpungementDate({ ...conviction, punishment: merged.mergedPunishment });
+  } else {
+    expungementDate = getExpungementDate(conviction);
+  }
+  const isActive = !expungementDate || newCrimeDate < expungementDate;
+
+  // Если судимость погашена
+  if (!isActive) {
+    return {
+      eligible: false,
+      reason: 'Рецидив не установлен: судимость погашена на дату нового преступления.',
+      expungementDate
+    };
+  }
+
+  // Проверить все преступления в этом приговоре
+  const { punishment } = conviction;
+  
+  // Проверка несовершеннолетства
+  if (conviction.crimes.some((crime) => crime.juvenile)) {
+    return {
+      eligible: false,
+      reason: 'Не учитывается для рецидива: преступление совершено до 18 лет.',
+      expungementDate
+    };
+  }
+
+  // Проверка формы вины
+  if (conviction.crimes.some((crime) => crime.intent !== 'умышленное')) {
+    return {
+      eligible: false,
+      reason: 'Не учитывается для рецидива: неумышленное преступление.',
+      expungementDate
+    };
+  }
+
+  // Проверка категории
+  if (conviction.crimes.some((crime) => crime.category === 'небольшой тяжести')) {
+    return {
+      eligible: false,
+      reason: 'Не учитывается для рецидива: преступление небольшой тяжести.',
+      expungementDate
+    };
+  }
+
+  // Проверка условного осуждения
+  if (punishment.mainConditional && !punishment.conditionalCancelledDate) {
+    return {
+      eligible: false,
+      reason: 'Не учитывается для рецидива: условное осуждение не отменено.',
+      expungementDate
+    };
+  }
+
+  // Проверка отсрочки
+  if (punishment.deferment && !punishment.defermentCancelledDate) {
+    return {
+      eligible: false,
+      reason: 'Не учитывается для рецидива: отсрочка не отменена.',
+      expungementDate
+    };
+  }
+
+  // Все проверки пройдены
+  return {
+    eligible: true,
+    reason: 'Учитывается.',
+    expungementDate
+  };
+};
+
 const getRecidivismAssessment = (newCrime, eligibleCrimes) => {
-  const pickDecisive = (list) => {
-    if (!list.length) return null;
-    const sorted = [...list].sort((a, b) => {
-      const da = getExpungementDate(a.conviction) || '9999-12-31';
-      const db = getExpungementDate(b.conviction) || '9999-12-31';
-      return db.localeCompare(da);
+  // Построить basis из всех уникальных приговоров в eligibleCrimes
+  const getUniqueBasis = (list) => {
+    const uniqueByConviction = new Map();
+    list.forEach((entry) => {
+      const convictionId = entry.conviction.id;
+      if (!uniqueByConviction.has(convictionId)) {
+        uniqueByConviction.set(convictionId, entry);
+      }
     });
-    return sorted[0];
+    return Array.from(uniqueByConviction.values());
   };
 
   if (newCrime.intent !== 'умышленное') {
     return {
       type: 'Нет рецидива',
       reason: 'Новое преступление совершено по неосторожности (ч. 1 ст. 18 УК РФ).',
-      basis: [],
-      decisive: null
+      hasRecidivism: false
     };
   }
 
@@ -189,8 +263,7 @@ const getRecidivismAssessment = (newCrime, eligibleCrimes) => {
     return {
       type: 'Нет рецидива',
       reason: 'Нет действующих судимостей за умышленные преступления средней/тяжкой категории.',
-      basis: [],
-      decisive: null
+      hasRecidivism: false
     };
   }
 
@@ -210,53 +283,42 @@ const getRecidivismAssessment = (newCrime, eligibleCrimes) => {
     ({ crime }) => crime.category === 'тяжкое'
   );
 
-  if (newCrime.category === 'тяжкое' && newCrime.realImprisonment && heavyImprisonmentPrior.length >= 2) {
-    const basis = heavyImprisonmentPrior.slice(0, 2);
+  if (newCrime.category === 'тяжкое' && heavyImprisonmentPrior.length >= 2) {
     return {
       type: 'Особо опасный рецидив',
       reason: 'Два и более тяжких умышленных преступления с реальным лишением свободы (ч. 3 ст. 18 УК РФ).',
-      basis,
-      decisive: pickDecisive(basis)
+      hasRecidivism: true
     };
   }
 
   if (newCrime.category === 'особо тяжкое' && (heavyImprisonmentPrior.length >= 2 || severeImprisonmentPrior.length >= 1)) {
-    const basis = severeImprisonmentPrior.length ? severeImprisonmentPrior.slice(0, 1) : heavyImprisonmentPrior.slice(0, 2);
     return {
       type: 'Особо опасный рецидив',
       reason: 'Особо тяжкое новое преступление и тяжкие/особо тяжкие судимости (ч. 3 ст. 18 УК РФ).',
-      basis,
-      decisive: pickDecisive(basis)
+      hasRecidivism: true
     };
   }
 
-  if (newCrime.category === 'тяжкое' && newCrime.realImprisonment && mediumPrior.length >= 2 && realImprisonmentPrior.length >= 2) {
-    const mediumImprisonment = realImprisonmentPrior.filter(({ crime }) => crime.category === 'средней тяжести');
-    const basis = mediumImprisonment.slice(0, 2).length ? mediumImprisonment.slice(0, 2) : realImprisonmentPrior.slice(0, 2);
+  if (newCrime.category === 'тяжкое' && mediumPrior.length >= 2 && realImprisonmentPrior.length >= 2) {
     return {
       type: 'Опасный рецидив',
       reason: 'Два и более умышленных преступления средней тяжести с лишением свободы (ч. 2 ст. 18 УК РФ).',
-      basis,
-      decisive: pickDecisive(basis)
+      hasRecidivism: true
     };
   }
 
   if (newCrime.category === 'тяжкое' && severePrior.length >= 1) {
-    const basis = severePrior.slice(0, 1);
     return {
       type: 'Опасный рецидив',
       reason: 'Новое тяжкое преступление при наличии тяжкой/особо тяжкой судимости (ч. 2 ст. 18 УК РФ).',
-      basis,
-      decisive: pickDecisive(basis)
+      hasRecidivism: true
     };
   }
 
-  const basis = [pickDecisive(eligibleCrimes)].filter(Boolean);
   return {
     type: 'Простой рецидив',
     reason: 'Наличие действующей судимости за умышленное преступление (ч. 1 ст. 18 УК РФ).',
-    basis,
-    decisive: pickDecisive(basis)
+    hasRecidivism: true
   };
 };
 
@@ -301,7 +363,8 @@ export default function App() {
   const [merged, setMerged] = useState({
     enabled: false,
     basis: 'ч. 5 ст. 69 УК РФ',
-    convictionIds: [],
+    selectedIds: [],
+    parentId: '',
     mergedPunishment: emptyPunishment()
   });
 
@@ -315,11 +378,29 @@ export default function App() {
 
   const recidivismReport = useMemo(() => {
     return newCrimes.map((crime) => {
-      const eligible = priorCrimes.filter((entry) => isConvictionEligible(entry, crime.date));
+      const eligible = priorCrimes.filter((entry) => {
+        const cid = entry.conviction.id;
+        if (merged.enabled && merged.selectedIds.includes(cid) && cid !== merged.parentId) return false;
+        return isConvictionEligible(entry, crime.date);
+      });
       const assessment = getRecidivismAssessment(crime, eligible);
-      return { crime, eligible, assessment };
+
+      // Для каждого приговора в convictions сформировать статус
+      const perConviction = convictions.map((conviction, idx) => {
+        const status = getConvictionRecidivismStatus(conviction, crime.date, merged);
+        return {
+          convictionIndex: idx,
+          convictionId: conviction.id,
+          verdictDate: conviction.verdictDate,
+          expungementDate: status.expungementDate,
+          eligible: status.eligible,
+          reason: status.reason
+        };
+      });
+
+      return { crime, eligible, assessment, perConviction };
     });
-  }, [newCrimes, priorCrimes, convictions, convictionNumberById]);
+  }, [newCrimes, priorCrimes, convictions, merged]);
 
   const updateCrime = (index, updates) => {
     setNewCrimes((prev) =>
@@ -475,18 +556,6 @@ export default function App() {
                       }))}
                     />
                   </Field>
-                  <Field label="Предполагается реальное лишение свободы">
-                    <select
-                      value={crime.realImprisonment ? 'yes' : 'no'}
-                      onChange={(event) =>
-                        updateCrime(index, { realImprisonment: event.target.value === 'yes' })
-                      }
-                      className="rounded-xl border border-law-200/40 bg-white px-3 py-2 text-sm"
-                    >
-                      <option value="no">Нет</option>
-                      <option value="yes">Да</option>
-                    </select>
-                  </Field>
                 </div>
               </div>
             ))}
@@ -523,12 +592,22 @@ export default function App() {
         <SectionCard title="IV. Судимости по предыдущим приговорам" icon={FileText}>
           <div className="space-y-6">
             {convictions.map((conviction, index) => {
-              const expungementDate = getExpungementDate(conviction);
+              const isChild = merged.enabled && merged.selectedIds.includes(conviction.id) && conviction.id !== merged.parentId;
+              const isParent = merged.enabled && merged.parentId === conviction.id;
+              const expungementDate = isParent
+                ? getExpungementDate({ ...conviction, punishment: merged.mergedPunishment })
+                : getExpungementDate(conviction);
 
               return (
                 <div key={conviction.id} className="rounded-2xl border border-white/10 bg-white/5 p-4">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <h3 className="text-sm font-semibold text-white">Приговор №{index + 1}</h3>
+                    {isParent && (
+                      <span className="ml-3 inline-block rounded-full bg-accent-500/20 px-2 py-1 text-xs text-accent-200">Основной (соединённый)</span>
+                    )}
+                    {isChild && (
+                      <span className="ml-3 inline-block rounded-full bg-law-200/20 px-2 py-1 text-xs text-law-100">Влившийся (соединён)</span>
+                    )}
                     {convictions.length > 1 && (
                       <button
                         className="flex items-center gap-2 text-xs text-red-200"
@@ -739,7 +818,8 @@ export default function App() {
                   </div>
 
                   <div className="mt-6 grid gap-4 md:grid-cols-2">
-                    <div className="rounded-2xl border border-white/10 bg-white/10 p-4 space-y-4">
+                    {!isChild ? (
+                      <div className="rounded-2xl border border-white/10 bg-white/10 p-4 space-y-4">
                       <h4 className="text-sm font-semibold text-law-100">Вид наказания</h4>
                       <Field label="Основное наказание">
                         <Select
@@ -863,7 +943,18 @@ export default function App() {
                           className="rounded-xl border border-law-200/40 bg-white px-3 py-2 text-sm"
                         />
                       </Field>
-                    </div>
+                      </div>
+                    ) : (
+                      <div className="rounded-2xl border border-white/10 bg-white/10 p-4 space-y-4">
+                        <div className="text-xs text-law-100/80">
+                          {merged.basis && merged.basis.includes('70') ? (
+                            'Дата погашения по приговору не рассчитывается: наказание вошло в соединение (ст.70), отдельные даты исполнения не введены.'
+                          ) : (
+                            'Влившийся приговор: наказание включено в соединение и не учитывается отдельно для расчёта.'
+                          )}
+                        </div>
+                      </div>
+                    )}
 
                     <div className="rounded-2xl border border-white/10 bg-white/10 p-4 space-y-4">
                       <h4 className="text-sm font-semibold text-law-100">Сроки исполнения</h4>
@@ -922,6 +1013,31 @@ export default function App() {
                       </div>
                     </div>
                   </div>
+
+                  {merged.enabled && merged.basis && merged.basis.includes('70') && merged.parentId && (
+                    <div className="mt-3 rounded-xl border border-white/10 bg-white/5 p-3 text-xs text-law-100/80">
+                      <div className="font-semibold">Для вводной части</div>
+                      <div className="mt-1">
+                        {(() => {
+                          const parent = convictions.find((c) => c.id === merged.parentId);
+                          const children = convictions.filter((c) => merged.selectedIds.includes(c.id) && c.id !== merged.parentId);
+                          if (!parent) return null;
+                          return (
+                            <div>
+                              Судим по приговору №{convictionNumberById.get(parent.id) ?? '—'}{parent.verdictDate ? ` от ${formatDate(parent.verdictDate)}` : ''} (основной, {merged.basis}), с ним соединён{children.length > 1 ? 'ы' : ''} {children.map((ch, i) => (
+                                <span key={ch.id}>приговор №{convictionNumberById.get(ch.id) ?? '—'}{ch.verdictDate ? ` от ${formatDate(ch.verdictDate)}` : ''}{i < children.length - 1 ? ', ' : ''}</span>
+                              ))} — {children.map((ch, i) => {
+                                const ed = getExpungementDate(ch);
+                                return (
+                                  <span key={ch.id}>судимость по нему {ed && ed < entry.crime.date ? 'погашена' : 'не погашена'}{ed ? ` (погашение: ${formatDate(ed)})` : ''}{i < children.length - 1 ? '; ' : ''}</span>
+                                );
+                              })}
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -939,10 +1055,12 @@ export default function App() {
                   <select
                     value={merged.enabled ? 'yes' : 'no'}
                     onChange={(event) =>
-                      setMerged((prev) => ({
-                        ...prev,
-                        enabled: event.target.value === 'yes'
-                      }))
+                      setMerged((prev) => {
+                        const yes = event.target.value === 'yes';
+                        return yes
+                          ? { ...prev }
+                          : { ...prev, enabled: false, selectedIds: [], parentId: '' };
+                      })
                     }
                     className="rounded-xl border border-law-200/40 bg-white px-3 py-2 text-sm"
                   >
@@ -964,106 +1082,153 @@ export default function App() {
                     ]}
                   />
                 </Field>
-                <Field label="Идентификаторы приговоров">
-                  <input
-                    type="text"
-                    placeholder="Напр. 1, 2"
-                    value={merged.convictionIds.join(', ')}
-                    onChange={(event) =>
-                      setMerged((prev) => ({
-                        ...prev,
-                        convictionIds: event.target.value
-                          .split(',')
-                          .map((item) => item.trim())
-                          .filter(Boolean)
-                      }))
-                    }
-                    className="rounded-xl border border-law-200/40 bg-white px-3 py-2 text-sm"
-                  />
-                </Field>
+                <div />
               </div>
+
+              {/* Выбор приговоров */}
               {merged.enabled && (
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="rounded-2xl border border-white/10 bg-white/10 p-4 space-y-3">
-                    <h4 className="text-sm font-semibold text-law-100">Наказание по соединенному приговору</h4>
-                    <Field label="Основное наказание">
-                      <Select
-                        value={merged.mergedPunishment.mainType}
-                        onChange={(event) =>
-                          setMerged((prev) => ({
-                            ...prev,
-                            mergedPunishment: {
-                              ...prev.mergedPunishment,
-                              mainType: event.target.value
-                            }
-                          }))
-                        }
-                        placeholder="Вид наказания"
-                        options={punishmentTypes
-                          .filter((item) => item.primary)
-                          .map((item) => ({
-                            value: item.id,
-                            label: item.label
-                          }))}
-                      />
-                    </Field>
-                    <Field label="Дата отбытия основного">
-                      <input
-                        type="date"
-                        value={merged.mergedPunishment.mainEndDate}
-                        onChange={(event) =>
-                          setMerged((prev) => ({
-                            ...prev,
-                            mergedPunishment: {
-                              ...prev.mergedPunishment,
-                              mainEndDate: event.target.value
-                            }
-                          }))
-                        }
-                        className="rounded-xl border border-law-200/40 bg-white px-3 py-2 text-sm"
-                      />
-                    </Field>
+                <div className="mt-4 space-y-3">
+                  <div className="text-sm font-semibold text-white">Выберите приговоры для соединения</div>
+                  <div className="space-y-2">
+                    {convictions.map((c, idx) => (
+                      <label key={c.id} className="flex items-center gap-3 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={merged.selectedIds.includes(c.id)}
+                          onChange={() =>
+                            setMerged((prev) => {
+                              const exists = prev.selectedIds.includes(c.id);
+                              const next = exists
+                                ? prev.selectedIds.filter((id) => id !== c.id)
+                                : [...prev.selectedIds, c.id];
+                              const parentOk = next.includes(prev.parentId) ? prev.parentId : (next[0] || '');
+                              return { ...prev, selectedIds: next, parentId: parentOk };
+                            })
+                          }
+                        />
+                        <span className="text-xs text-law-100/90">Приговор №{idx + 1}{c.verdictDate ? ` от ${formatDate(c.verdictDate)}` : ''}</span>
+                      </label>
+                    ))}
                   </div>
-                  <div className="rounded-2xl border border-white/10 bg-white/10 p-4 space-y-3">
-                    <h4 className="text-sm font-semibold text-law-100">Дополнительное наказание</h4>
-                    <Field label="Доп. наказание">
-                      <Select
-                        value={merged.mergedPunishment.additionalType}
-                        onChange={(event) =>
-                          setMerged((prev) => ({
-                            ...prev,
-                            mergedPunishment: {
-                              ...prev.mergedPunishment,
-                              additionalType: event.target.value
+
+                  {merged.selectedIds.length >= 2 && (
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <Field label="Основной приговор (после соединения)">
+                        <select
+                          value={merged.parentId}
+                          onChange={(e) => setMerged((prev) => ({ ...prev, parentId: e.target.value }))}
+                          className="rounded-xl border border-law-200/40 bg-white px-3 py-2 text-sm"
+                        >
+                          <option value="">Выберите основной</option>
+                          {convictions
+                            .filter((c) => merged.selectedIds.includes(c.id))
+                            .map((c) => (
+                              <option key={c.id} value={c.id}>
+                                Приговор №{convictionNumberById.get(c.id) ?? '—'}{c.verdictDate ? ` от ${formatDate(c.verdictDate)}` : ''}
+                              </option>
+                            ))}
+                        </select>
+                      </Field>
+                      <div className="flex items-end gap-3">
+                        <button
+                          className="flex items-center gap-2 rounded-xl border border-law-200/50 bg-law-200/20 px-4 py-2 text-sm text-law-100"
+                          onClick={() =>
+                            setMerged((prev) => {
+                              const parentId = prev.parentId || prev.selectedIds[0] || '';
+                              const parentConv = convictions.find((c) => c.id === parentId);
+                              const mergedPun = parentConv && !prev.mergedPunishment.mainEndDate
+                                ? parentConv.punishment
+                                : prev.mergedPunishment;
+                              return { ...prev, enabled: true, parentId, mergedPunishment: mergedPun };
+                            })
+                          }
+                          disabled={merged.selectedIds.length < 2}
+                        >
+                          Сформировать соединённый приговор
+                        </button>
+                        <button
+                          className="flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-sm text-law-100/70"
+                          onClick={() => setMerged((prev) => ({ ...prev, enabled: false }))}
+                        >
+                          Отменить
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {merged.enabled && (
+                    <div className="rounded-2xl border border-white/10 bg-white/10 p-4 space-y-3 mt-3">
+                      <h4 className="text-sm font-semibold text-law-100">Соединённый приговор</h4>
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <Field label="Основное наказание">
+                          <Select
+                            value={merged.mergedPunishment.mainType}
+                            onChange={(event) =>
+                              setMerged((prev) => ({
+                                ...prev,
+                                mergedPunishment: {
+                                  ...prev.mergedPunishment,
+                                  mainType: event.target.value
+                                }
+                              }))
                             }
-                          }))
-                        }
-                        placeholder="Доп. наказание"
-                        options={punishmentTypes
-                          .filter((item) => item.additional)
-                          .map((item) => ({
-                            value: item.id,
-                            label: item.label
-                          }))}
-                      />
-                    </Field>
-                    <Field label="Дата отбытия доп. наказания">
-                      <input
-                        type="date"
-                        value={merged.mergedPunishment.additionalEndDate}
-                        onChange={(event) =>
-                          setMerged((prev) => ({
-                            ...prev,
-                            mergedPunishment: {
-                              ...prev.mergedPunishment,
-                              additionalEndDate: event.target.value
+                            placeholder="Вид наказания"
+                            options={punishmentTypes
+                              .filter((item) => item.primary)
+                              .map((item) => ({ value: item.id, label: item.label }))}
+                          />
+                        </Field>
+                        <Field label="Дата отбытия основного">
+                          <input
+                            type="date"
+                            value={merged.mergedPunishment.mainEndDate}
+                            onChange={(event) =>
+                              setMerged((prev) => ({
+                                ...prev,
+                                mergedPunishment: { ...prev.mergedPunishment, mainEndDate: event.target.value }
+                              }))
                             }
-                          }))
-                        }
-                        className="rounded-xl border border-law-200/40 bg-white px-3 py-2 text-sm"
-                      />
-                    </Field>
-                  </div>
+                            className="rounded-xl border border-law-200/40 bg-white px-3 py-2 text-sm"
+                          />
+                        </Field>
+                      </div>
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <Field label="Доп. наказание">
+                          <Select
+                            value={merged.mergedPunishment.additionalType}
+                            onChange={(event) =>
+                              setMerged((prev) => ({
+                                ...prev,
+                                mergedPunishment: { ...prev.mergedPunishment, additionalType: event.target.value }
+                              }))
+                            }
+                            placeholder="Доп. наказание"
+                            options={punishmentTypes.filter((item) => item.additional).map((item) => ({ value: item.id, label: item.label }))}
+                          />
+                        </Field>
+                        <Field label="Дата отбытия доп. наказания">
+                          <input
+                            type="date"
+                            value={merged.mergedPunishment.additionalEndDate}
+                            onChange={(event) =>
+                              setMerged((prev) => ({
+                                ...prev,
+                                mergedPunishment: { ...prev.mergedPunishment, additionalEndDate: event.target.value }
+                              }))
+                            }
+                            className="rounded-xl border border-law-200/40 bg-white px-3 py-2 text-sm"
+                          />
+                        </Field>
+                      </div>
+                      <div className="text-xs text-law-100/80">
+                        {merged.basis && merged.basis.includes('70') ? (
+                          <div>По ст.70: при определении рецидива и дате погашения будет учитываться основной приговор.</div>
+                        ) : (
+                          <div>При соединении по совокупности (ч.5 ст.69) влившиеся приговоры не учитываются отдельно.</div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1071,10 +1236,11 @@ export default function App() {
         </SectionCard>
 
         <SectionCard title="V. Наличие рецидива" icon={Gavel}>
-          <div className="space-y-4">
+          <div className="space-y-6">
             {recidivismReport.map((entry, index) => (
               <div key={entry.crime.id} className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
+                {/* Итог по новому преступлению */}
+                <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-white/10">
                   <div>
                     <h3 className="text-sm font-semibold text-white">
                       Преступление №{index + 1}
@@ -1083,46 +1249,53 @@ export default function App() {
                       Дата: {formatDate(entry.crime.date)} · Статья: {formatArticleRef(entry.crime)}
                     </p>
                   </div>
-                  <span className="rounded-full bg-law-200/30 px-3 py-1 text-xs text-white">
-                    {entry.assessment.type}
-                  </span>
-                </div>
-                <p className="mt-3 text-sm text-law-100/80">{entry.assessment.reason}</p>
-                <div className="mt-4 text-xs text-law-100/70">
-                  Судимости, учитываемые в расчете: {entry.eligible.length || 'нет'}
-                </div>
-                {entry.assessment.decisive && (
-                  <div className="mt-3 text-xs text-law-100/80">
-                    <div className="font-semibold">Определяющий приговор:</div>
-                    <div>
-                      Приговор №{convictionNumberById.get(entry.assessment.decisive.conviction.id) ?? '—'}
-                      {entry.assessment.decisive.conviction.verdictDate
-                        ? ` от ${formatDate(entry.assessment.decisive.conviction.verdictDate)}`
-                        : ''}
-                      {' — '}
-                      {formatArticleRef(entry.assessment.decisive.crime)}
-                      {' — '}
-                      погашение: {formatDate(getExpungementDate(entry.assessment.decisive.conviction)) || '—'}
+                  <div className="text-right">
+                    <div className="text-sm font-semibold text-white">
+                      Рецидив: {entry.assessment.hasRecidivism ? 'ДА' : 'НЕТ'}
                     </div>
+                    {entry.assessment.hasRecidivism && (
+                      <span className="text-xs text-law-100">
+                        Вид: {entry.assessment.type}
+                      </span>
+                    )}
                   </div>
-                )}
-                {entry.assessment.basis?.length > 0 && (
-                  <div className="mt-3 text-xs text-law-100/80">
-                    <div className="font-semibold">Основание (какие приговоры учтены):</div>
-                    <ul className="mt-1 list-disc pl-5 space-y-1">
-                      {entry.assessment.basis.map((b) => (
-                        <li key={`${b.conviction.id}-${b.crime.id}`}>
-                          Приговор №{convictionNumberById.get(b.conviction.id) ?? '—'}
-                          {b.conviction.verdictDate ? ` от ${formatDate(b.conviction.verdictDate)}` : ''}
-                          {' — '}
-                          {formatArticleRef(b.crime)}
-                          {' — '}
-                          погашение: {formatDate(getExpungementDate(b.conviction)) || '—'}
-                        </li>
-                      ))}
-                    </ul>
+                </div>
+                
+                <p className="mt-3 text-sm text-law-100/80">{entry.assessment.reason}</p>
+
+                {/* Анализ по приговорам */}
+                <div className="mt-6">
+                  <h4 className="text-sm font-semibold text-white mb-4">Анализ по приговорам</h4>
+                  <div className="space-y-3">
+                    {entry.perConviction.map((conv) => {
+                      const isParent = merged.enabled && merged.parentId === conv.convictionId;
+                      const isChild = merged.enabled && merged.selectedIds.includes(conv.convictionId) && conv.convictionId !== merged.parentId;
+                      return (
+                        <div key={conv.convictionId} className="rounded-xl border border-white/10 bg-white/10 p-3 text-xs text-law-100/80">
+                          <div className="flex items-center justify-between">
+                            <div className="font-semibold text-law-100">
+                              Приговор №{conv.convictionIndex + 1}
+                              {conv.verdictDate ? ` от ${formatDate(conv.verdictDate)}` : ''}
+                            </div>
+                            <div>
+                              {isParent && <span className="inline-block rounded-full bg-accent-500/20 px-2 py-1 text-xs text-accent-200">Основной</span>}
+                              {isChild && <span className="inline-block rounded-full bg-law-200/20 px-2 py-1 text-xs text-law-100 ml-2">Влившийся</span>}
+                            </div>
+                          </div>
+                          <div className="mt-1">Дата погашения судимости: {formatDate(conv.expungementDate) || '—'}</div>
+                          <div className="mt-2 text-law-100/70">{conv.reason}</div>
+                          <div className="mt-2 text-law-100/70">
+                            {isChild ? (
+                              <div>Роль: не учитывается отдельно (вошёл в соединение по {merged.basis}{merged.parentId ? ` с приговором №${convictionNumberById.get(merged.parentId)}` : ''}).</div>
+                            ) : (
+                              <div>Роль: {conv.eligible ? 'учитывается' : 'не учитывается'}</div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
-                )}
+                </div>
               </div>
             ))}
           </div>
