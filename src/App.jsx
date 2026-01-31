@@ -1054,14 +1054,15 @@ export default function App() {
                 <Field label="Есть соединение">
                   <select
                     value={merged.enabled ? 'yes' : 'no'}
-                    onChange={(event) =>
-                      setMerged((prev) => {
-                        const yes = event.target.value === 'yes';
-                        return yes
-                          ? { ...prev }
-                          : { ...prev, enabled: false, selectedIds: [], parentId: '' };
-                      })
-                    }
+                    onChange={(event) => {
+                      const yes = event.target.value === 'yes';
+                      setMerged((prev) => ({
+                        ...prev,
+                        enabled: yes,
+                        // при выключении очищаем выбор
+                        ...(yes ? {} : { selectedIds: [], parentId: '' })
+                      }));
+                    }}
                     className="rounded-xl border border-law-200/40 bg-white px-3 py-2 text-sm"
                   >
                     <option value="no">Нет</option>
@@ -1089,6 +1090,7 @@ export default function App() {
               {merged.enabled && (
                 <div className="mt-4 space-y-3">
                   <div className="text-sm font-semibold text-white">Выберите приговоры для соединения</div>
+                  <div className="text-xs text-law-100/80">Выберите минимум 2 приговора и отметьте основной.</div>
                   <div className="space-y-2">
                     {convictions.map((c, idx) => (
                       <label key={c.id} className="flex items-center gap-3 text-sm">
@@ -1106,7 +1108,7 @@ export default function App() {
                             })
                           }
                         />
-                        <span className="text-xs text-law-100/90">Приговор №{idx + 1}{c.verdictDate ? ` от ${formatDate(c.verdictDate)}` : ''}</span>
+                        <span className="text-xs text-law-100/90">Приговор №{idx + 1}{c.verdictDate ? ` от ${formatDate(c.verdictDate)}` : ' (дата не указана)'}</span>
                       </label>
                     ))}
                   </div>
@@ -1142,7 +1144,7 @@ export default function App() {
                               return { ...prev, enabled: true, parentId, mergedPunishment: mergedPun };
                             })
                           }
-                          disabled={merged.selectedIds.length < 2}
+                          disabled={merged.selectedIds.length < 2 || !merged.parentId}
                         >
                           Сформировать соединённый приговор
                         </button>
