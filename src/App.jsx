@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   CalendarDays,
   ClipboardList,
@@ -748,6 +748,86 @@ export default function App() {
     );
   };
 
+  // Load test scenario preset
+  const loadPreset = (presetId) => {
+    if (presetId === 1) {
+      // Test scenario: two crimes and one conviction
+      setBirthDate('1990-05-15');
+      
+      setNewCrimes([
+        {
+          id: crypto.randomUUID(),
+          date: '2024-06-10',
+          articleId: '161',
+          partId: '1',
+          pointId: '',
+          category: 'тяжкое',
+          intent: 'умышленное'
+        },
+        {
+          id: crypto.randomUUID(),
+          date: '2024-08-20',
+          articleId: '158',
+          partId: '2',
+          pointId: 'б',
+          category: 'средней тяжести',
+          intent: 'умышленное'
+        }
+      ]);
+      
+      setConvictions([
+        {
+          id: crypto.randomUUID(),
+          verdictDate: '2020-03-15',
+          legalDate: '2020-04-01',
+          pre2013: false,
+          crimes: [
+            {
+              id: crypto.randomUUID(),
+              date: '2019-12-20',
+              articleId: '158',
+              partId: '2',
+              pointId: 'в',
+              category: 'средней тяжести',
+              intent: 'умышленное',
+              juvenile: false
+            }
+          ],
+          punishment: {
+            mainType: 'imprisonment',
+            mainReal: true,
+            mainConditional: false,
+            conditionalCancelledDate: '',
+            deferment: false,
+            defermentCancelledDate: '',
+            udoDate: '',
+            mainEndDate: '2022-03-15',
+            additionalType: '',
+            additionalEndDate: ''
+          }
+        }
+      ]);
+      
+      setMergeOps([]);
+      setCreatingOp({
+        basis: 'ч. 5 ст. 69 УК РФ',
+        childNodeIds: [],
+        parentNodeId: ''
+      });
+      
+      // Update URL without reload
+      window.history.replaceState({}, '', '?preset=1');
+    }
+  };
+
+  // Load preset from URL on mount
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('preset') === '1') {
+      loadPreset(1);
+    }
+  }, []); // Empty dependency array: runs only once on mount
+
   return (
     <div className="min-h-screen bg-law-gradient">
       <div className="relative overflow-hidden">
@@ -762,9 +842,18 @@ export default function App() {
                 <Scale className="h-4 w-4" />
                 Юридический калькулятор
               </div>
-              <h1 className="text-4xl font-semibold text-white">
-                «Калькулятор рецидива»
-              </h1>
+              <div className="flex items-center gap-3">
+                <h1 className="text-4xl font-semibold text-white">
+                  «Калькулятор рецидива»
+                </h1>
+                <button
+                  onClick={() => loadPreset(1)}
+                  className="ml-4 whitespace-nowrap rounded-xl bg-accent-500/20 px-3 py-2 text-sm text-accent-200 border border-accent-500/40 hover:bg-accent-500/30 transition-colors"
+                  title="Загрузить тестовый сценарий с примером данных"
+                >
+                  📋 Загрузить тестовый сценарий
+                </button>
+              </div>
               <p className="max-w-2xl text-sm text-law-100/90">
                 Заполните данные по новым преступлениям и предыдущим приговорам, чтобы
                 получить анализ наличия рецидива по ст. 18 и 86 УК РФ. Интерфейс
