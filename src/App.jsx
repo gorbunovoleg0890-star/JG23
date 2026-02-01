@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import themis from './assets/themis.svg';
 import lawBook from './assets/law-book.svg';
+import { createGorbunovPreset } from './presets/gorbunov';
 import {
   crimeCategories,
   intentTypes,
@@ -751,69 +752,14 @@ export default function App() {
   // Load test scenario preset
   const loadPreset = (presetId) => {
     if (presetId === 1) {
-      // Test scenario: two crimes and one conviction
-      setBirthDate('1990-05-15');
+      // Load Gorbunov's baseline scenario
+      const preset = createGorbunovPreset();
       
-      setNewCrimes([
-        {
-          id: crypto.randomUUID(),
-          date: '2024-06-10',
-          articleId: '161',
-          partId: '1',
-          pointId: '',
-          category: 'тяжкое',
-          intent: 'умышленное'
-        },
-        {
-          id: crypto.randomUUID(),
-          date: '2024-08-20',
-          articleId: '158',
-          partId: '2',
-          pointId: 'б',
-          category: 'средней тяжести',
-          intent: 'умышленное'
-        }
-      ]);
-      
-      setConvictions([
-        {
-          id: crypto.randomUUID(),
-          verdictDate: '2020-03-15',
-          legalDate: '2020-04-01',
-          pre2013: false,
-          crimes: [
-            {
-              id: crypto.randomUUID(),
-              date: '2019-12-20',
-              articleId: '158',
-              partId: '2',
-              pointId: 'в',
-              category: 'средней тяжести',
-              intent: 'умышленное',
-              juvenile: false
-            }
-          ],
-          punishment: {
-            mainType: 'imprisonment',
-            mainReal: true,
-            mainConditional: false,
-            conditionalCancelledDate: '',
-            deferment: false,
-            defermentCancelledDate: '',
-            udoDate: '',
-            mainEndDate: '2022-03-15',
-            additionalType: '',
-            additionalEndDate: ''
-          }
-        }
-      ]);
-      
-      setMergeOps([]);
-      setCreatingOp({
-        basis: 'ч. 5 ст. 69 УК РФ',
-        childNodeIds: [],
-        parentNodeId: ''
-      });
+      setBirthDate(preset.birthDate);
+      setNewCrimes(preset.newCrimes);
+      setConvictions(preset.convictions);
+      setMergeOps(preset.mergeOps);
+      setCreatingOp(preset.creatingOp);
       
       // Update URL without reload
       window.history.replaceState({}, '', '?preset=1');
