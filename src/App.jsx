@@ -1901,7 +1901,7 @@ export default function App() {
                           <div className="font-semibold text-law-100 mb-2">{nodeLabel}</div>
 
                           {/* Информация об операциях и цепочках */}
-                          {hasParentOp && (
+                          {hasParentOp && nodeInfo.parentOp && (
                             <div className="mb-2 rounded bg-law-200/10 px-2 py-1.5 border-l-2 border-law-200/50">
                               {isPartOfChain ? (
                                 <>
@@ -1911,7 +1911,7 @@ export default function App() {
                                       соединён по {nodeInfo.parentOp.basis} с результатом операции (основной: Приговор №{nodeInfo.parentConvictionIdx + 1})
                                     </span>
                                   </div>
-                                  {nodeInfo.chainInfo && nodeInfo.chainInfo.lastOp !== nodeInfo.parentOp && (
+                                  {nodeInfo.chainInfo && nodeInfo.chainInfo.lastOp && nodeInfo.parentOp && nodeInfo.chainInfo.lastOp !== nodeInfo.parentOp && (
                                     <div className="text-law-100/70 mt-1">
                                       ↳ затем поглощён более поздней операцией
                                     </div>
@@ -1929,7 +1929,7 @@ export default function App() {
                           )}
                           
                           {/* Если приговор был основным узлом и результат поглощен другой операцией */}
-                          {hasParentOp && isPartOfChain && (
+                          {hasParentOp && nodeInfo.parentOp && isPartOfChain && (
                             <div className="mb-2 text-law-100/70 italic text-xs">
                               ℹ️ Основной узел был соединён, а результат включён в более позднее соединение
                             </div>
@@ -1946,7 +1946,7 @@ export default function App() {
 
                           {/* Рецидив по приговору */}
                           <div className="text-law-100/90">
-                            {hasParentOp ? (
+                            {hasParentOp && nodeInfo.parentOp ? (
                               <>
                                 <strong>Рецидив:</strong>{' '}
                                 <span className="text-law-100/70">
