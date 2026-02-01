@@ -489,6 +489,13 @@ export default function App() {
     });
   };
 
+  // Helper: Get effective punishment (from operation if parent, else from conviction)
+  const getEffectivePunishment = (conviction) => {
+    const parentOp = getParentOperation(conviction.id);
+    if (parentOp) return parentOp.mergedPunishment;
+    return conviction.punishment;
+  };
+
   // Helper: Get expungement date using effective punishment
   const getConvictionExpungementDate = (conviction) => {
     const punishment = getEffectivePunishment(conviction);
@@ -539,6 +546,43 @@ export default function App() {
       conditionalValid &&
       defermentValid
     );
+  };
+
+  // Helper: Get all operations where a conviction is a child node
+  const getConvictionChildOperations = (convictionId) => {
+    const nodeId = `conviction:${convictionId}`;
+    const consumingOpId = nodeGraph.consumedBy.get(nodeId);
+    if (!consumingOpId) return [];
+    
+    const consumingOp = mergeOps.find(op => op.id === consumingOpId);
+    return consumingOp ? [consumingOp] : [];
+  };
+
+  // Helper: Get the operation that consumed the result of a parent operation
+  const getParentOperationConsumingOp = (opId) => {
+    const resultNodeId = `merge:${opId}`;
+    const consumingOpId = nodeGraph.consumedBy.get(resultNodeId);
+    if (!consumingOpId) return null;
+    return mergeOps.find(op => op.id === consumingOpId);
+  };
+
+  // Helper: Recursively get the chain of operations starting from a conviction's parent operation
+  const getOperationChain = (convictionId) => {
+    const parentOp = getParentOperation(convictionId);
+    if (!parentOp) return null;
+    
+    const chain = [parentOp];
+    let currentOp = parentOp;
+    
+    // Keep going up the chain
+    while (true) {
+      const consumingOp = getParentOperationConsumingOp(currentOp.id);
+      if (!consumingOp) break;
+      chain.push(consumingOp);
+      currentOp = consumingOp;
+    }
+    
+    return chain;
   };
 
   // Check if mergeOp can be deleted (its result is not used in another op)
@@ -795,107 +839,71 @@ export default function App() {
         conviction: { punishment: e.punishment }
       })));
 
-      // Для справочного вывода: собрать все узлы (base + virtual) с информацией
-      const perNode = Array.from(nodeGraph.nodesById.keys()).map((nodeId) => {
+      // Для справочного вывода: собрать только базовые узлы (приговоры) с информацией
+      // о цепочках операций, которые на них влияют
+      const perNode = convictions.map((conviction, convictionIdx) => {
+        const nodeId = `conviction:${conviction.id}`;
         const node = getNode(nodeId);
-        const isConsumed = nodeGraph.consumedBy.has(nodeId);
-        const consumedByOpId = nodeGraph.consumedBy.get(nodeId) || null;
-        const consumingOp = consumedByOpId ? mergeOps.find(op => op.id === consumedByOpId) : null;
         
-        // Правильно считаем дату погашения для дочерних узлов
-        let effectiveExpungementDate = '';
-        let dateDisplayText = '';
+        // Получить информацию об операциях этого приговора
+        const parentOp = getParentOperation(conviction.id);
+        const operationChain = getOperationChain(conviction.id);
         
-        if (isConsumed && consumingOp) {
-          // Это дочерний узел в операции
-          if (consumingOp.basis.includes('69')) {
-            // ч.5 ст.69: не показываем отдельную дату, ссылаемся на основной
-            dateDisplayText = 'см. основной узел';
-            effectiveExpungementDate = '';
-          } else if (consumingOp.basis.includes('70')) {
-            // ст.70 или ст.70+74: дата считается от основного узла
-            const parentNode = getNode(consumingOp.parentNodeId);
-            if (parentNode) {
-              const category = getMaxCategory(consumingOp.parentNodeId);
-              const crimes = getUnderlyingCrimes(consumingOp.parentNodeId);
-              const isImprisonment = consumingOp.mergedPunishment.mainType === 'imprisonment' ||
-                                    consumingOp.mergedPunishment.mainType === 'life-imprisonment';
-              const actualEndDate = consumingOp.mergedPunishment.udoDate || consumingOp.mergedPunishment.mainEndDate;
-              const endDate = consumingOp.mergedPunishment.additionalEndDate &&
-                            consumingOp.mergedPunishment.additionalEndDate > actualEndDate
-                ? consumingOp.mergedPunishment.additionalEndDate
-                : actualEndDate;
-
-              if (endDate) {
-                if (crimes.some((c) => c.juvenile)) {
-                  const juvenileTerm = getJuvenileTerm(category, isImprisonment);
-                  if (juvenileTerm.months) {
-                    effectiveExpungementDate = addMonths(endDate, juvenileTerm.months);
-                  } else {
-                    effectiveExpungementDate = addYears(endDate, juvenileTerm.years);
-                  }
-                } else if (consumingOp.mergedPunishment.mainConditional) {
-                  effectiveExpungementDate = endDate;
-                } else if (!isImprisonment) {
-                  effectiveExpungementDate = addYears(endDate, 1);
-                } else {
-                  const pre2013 = getUnderlyingConvictions(consumingOp.parentNodeId).some(c => c.pre2013);
-                  effectiveExpungementDate = addYears(endDate, getCategoryTermYears(category, pre2013));
-                }
-              }
-            }
-          }
-        } else {
-          // Базовый узел или корневой virtual узел - считаем как обычно
-          effectiveExpungementDate = getNodeExpungementDate(nodeId);
-        }
+        // Узнать, был ли результат основной операции поглощен другой операцией
+        const chainInfo = operationChain ? {
+          firstOp: operationChain[0],
+          lastOp: operationChain[operationChain.length - 1],
+          isPartOfChain: operationChain.length > 1
+        } : null;
         
+        // Для parent operations: найти индекс parent conviction в convictions
+        const parentConvictionIdx = parentOp 
+          ? convictions.findIndex(c => parentOp.parentNodeId === `conviction:${c.id}`)
+          : -1;
+        
+        // Для consuming operation (если результат этого приговора был поглощен):
+        const consumingOpId = nodeGraph.consumedBy.get(nodeId);
+        const consumingOp = consumingOpId ? mergeOps.find(op => op.id === consumingOpId) : null;
+        
+        // Считаем дату погашения (используется effective punishment)
+        const effectiveExpungementDate = getNodeExpungementDate(nodeId);
         const isActive = !effectiveExpungementDate || crime.date < effectiveExpungementDate;
 
-        // Проверить eligibility для этого узла
+        // Проверить eligibility
         let eligible = false;
         let reason = '';
 
         if (!isActive) {
           reason = 'Судимость погашена на дату нового преступления.';
-        } else if (node.type === 'base') {
+        } else {
           const convictionEligible = isConvictionEligibleForRecidivism(
-            { crime: node.conviction.crimes[0], conviction: node.conviction },
+            { crime: conviction.crimes[0], conviction },
             crime.date
           );
           if (convictionEligible) {
             eligible = true;
             reason = 'Учитывается.';
           } else {
-            const entry = { conviction: node.conviction, crime: node.conviction.crimes[0] };
-            const status = getConvictionRecidivismStatus(node.conviction, crime.date, []);
+            const status = getConvictionRecidivismStatus(conviction, crime.date, []);
             reason = status.reason;
-          }
-        } else {
-          // Virtual node: eligible если это root и все underlying приговоры ok
-          const isRoot = !isConsumed;
-          if (isRoot) {
-            const underlyingConvictions = getUnderlyingConvictions(nodeId);
-            eligible = underlyingConvictions.every((conv) =>
-              isConvictionEligibleForRecidivism({ crime: conv.crimes[0], conviction: conv }, crime.date)
-            );
-            reason = eligible ? 'Учитывается.' : 'Не учитывается (содержит неподходящие приговоры).';
-          } else {
-            reason = 'Влился в более позднее соединение.';
           }
         }
 
         return {
           nodeId,
           node,
+          conviction,
+          convictionIdx,
           expungementDate: effectiveExpungementDate,
-          dateDisplayText,
           eligible,
           isActive,
           reason,
-          isConsumed,
-          consumedByOpId,
-          consumingOp
+          parentOp,
+          parentConvictionIdx,
+          chainInfo,
+          operationChain,
+          consumingOp,
+          consumingOpId
         };
       });
 
@@ -1881,42 +1889,80 @@ export default function App() {
                   <h4 className="text-sm font-semibold text-white mb-4">Анализ по узлам (приговорам и их соединениям)</h4>
                   <div className="space-y-2">
                     {entry.perNode.map((nodeInfo) => {
-                      const isRoot = !nodeInfo.isConsumed;
-                      const isRootMerge = nodeInfo.node.type === 'virtual' && isRoot;
-                      const isChildOf69 = nodeInfo.consumingOp && nodeInfo.consumingOp.basis.includes('69');
-                      const isChildOf70 = nodeInfo.consumingOp && nodeInfo.consumingOp.basis.includes('70');
+                      const nodeLabel = `Приговор №${nodeInfo.convictionIdx + 1}${nodeInfo.conviction.verdictDate ? ` от ${formatDate(nodeInfo.conviction.verdictDate)}` : ''}`;
+                      
+                      // Информация об операциях
+                      const hasParentOp = nodeInfo.parentOp !== null;
+                      const isPartOfChain = nodeInfo.chainInfo && nodeInfo.chainInfo.isPartOfChain;
                       
                       return (
-                        <div key={nodeInfo.nodeId} className={`rounded-lg border ${isRoot ? 'border-law-200/40 bg-white/8' : 'border-white/10 bg-white/3'} p-3 text-xs`}>
-                          {/* Заголовок узла */}
-                          <div className="flex items-start justify-between gap-3 mb-2">
-                            <div className="font-semibold text-law-100 flex-1">
-                              {getNodeLabel(nodeInfo.nodeId)}
+                        <div key={nodeInfo.nodeId} className="rounded-lg border border-law-200/40 bg-white/8 p-3 text-xs">
+                          {/* Заголовок приговора */}
+                          <div className="font-semibold text-law-100 mb-2">{nodeLabel}</div>
+
+                          {/* Информация об операциях и цепочках */}
+                          {hasParentOp && (
+                            <div className="mb-2 rounded bg-law-200/10 px-2 py-1.5 border-l-2 border-law-200/50">
+                              {isPartOfChain ? (
+                                <>
+                                  <div className="text-law-100/90">
+                                    <strong>Операция:</strong>{' '}
+                                    <span className="text-law-100/70">
+                                      соединён по {nodeInfo.parentOp.basis} с результатом операции (основной: Приговор №{nodeInfo.parentConvictionIdx + 1})
+                                    </span>
+                                  </div>
+                                  {nodeInfo.chainInfo && nodeInfo.chainInfo.lastOp !== nodeInfo.parentOp && (
+                                    <div className="text-law-100/70 mt-1">
+                                      ↳ затем поглощён более поздней операцией
+                                    </div>
+                                  )}
+                                </>
+                              ) : (
+                                <div className="text-law-100/90">
+                                  <strong>Операция:</strong>{' '}
+                                  <span className="text-law-100/70">
+                                    соединён по {nodeInfo.parentOp.basis} (операция №{mergeOps.findIndex(op => op.id === nodeInfo.parentOp.id) + 1})
+                                  </span>
+                                </div>
+                              )}
                             </div>
-                            {isChildOf70 && (
-                              <span className="inline-block rounded-sm bg-law-200/30 px-2 py-1 text-xs text-law-100 whitespace-nowrap">
-                                соединение ст.70
-                              </span>
-                            )}
-                            {isChildOf69 && (
-                              <span className="inline-block rounded-sm bg-law-200/30 px-2 py-1 text-xs text-law-100 whitespace-nowrap">
-                                соединение ст.69
-                              </span>
-                            )}
-                          </div>
+                          )}
+                          
+                          {/* Если приговор был основным узлом и результат поглощен другой операцией */}
+                          {hasParentOp && isPartOfChain && (
+                            <div className="mb-2 text-law-100/70 italic text-xs">
+                              ℹ️ Основной узел был соединён, а результат включён в более позднее соединение
+                            </div>
+                          )}
 
                           {/* Дата погашения */}
                           <div className="text-law-100/90 mb-1">
                             <strong>Дата погашения:</strong>{' '}
-                            {nodeInfo.dateDisplayText 
-                              ? <em className="text-law-100/70">{nodeInfo.dateDisplayText}</em>
-                              : <span>{formatDate(nodeInfo.expungementDate) || '(данные не заполнены)'}</span>
+                            {nodeInfo.expungementDate 
+                              ? <span>{formatDate(nodeInfo.expungementDate)}</span>
+                              : <em className="text-law-100/70">(данные не заполнены)</em>
                             }
                           </div>
 
-                          {/* Рецидив по узлу */}
-                          <div className="text-law-100/90 mb-1">
-                            {isRoot ? (
+                          {/* Рецидив по приговору */}
+                          <div className="text-law-100/90">
+                            {hasParentOp ? (
+                              <>
+                                <strong>Рецидив:</strong>{' '}
+                                <span className="text-law-100/70">
+                                  {nodeInfo.parentOp.basis.includes('69') 
+                                    ? 'соединён по ч.5 ст.69, не учитывается отдельно (смотреть основной узел)'
+                                    : nodeInfo.parentOp.basis.includes('70')
+                                    ? 'влился по ст.70; дата погашения определяется по основному узлу'
+                                    : 'смотреть основной узел'}
+                                </span>
+                                {nodeInfo.parentOp.basis.includes('74') && (
+                                  <div className="text-law-100/70 mt-1 italic">
+                                    ⚠️ Условность отменена по ст. 74 УК РФ
+                                  </div>
+                                )}
+                              </>
+                            ) : (
                               <>
                                 <strong>Рецидив:</strong>{' '}
                                 {nodeInfo.eligible 
@@ -1924,29 +1970,8 @@ export default function App() {
                                   : <span className="text-law-100/70">не учитывается — {nodeInfo.reason}</span>
                                 }
                               </>
-                            ) : isChildOf69 ? (
-                              <>
-                                <strong>Рецидив:</strong>{' '}
-                                <span className="text-law-100/70">соединён по ч.5 ст.69, не учитывается отдельно (см. основной узел)</span>
-                              </>
-                            ) : isChildOf70 ? (
-                              <>
-                                <strong>Рецидив:</strong>{' '}
-                                <span className="text-law-100/70">влился по ст.70 — дата погашения выше, рецидив считается по основному узлу</span>
-                              </>
-                            ) : (
-                              <>
-                                <strong>Статус:</strong> <span className="text-law-100/70">{nodeInfo.reason}</span>
-                              </>
                             )}
                           </div>
-
-                          {/* Дополнительный комментарий для ст.70+74 условного */}
-                          {nodeInfo.consumingOp && nodeInfo.consumingOp.basis.includes('74') && nodeInfo.node.type === 'base' && nodeInfo.node.conviction.punishment.mainConditional && (
-                            <div className="text-law-100/70 mt-1 italic">
-                              ⚠ Условность отменена по ст. 74 УК РФ в результате соединения
-                            </div>
-                          )}
                         </div>
                       );
                     })}
