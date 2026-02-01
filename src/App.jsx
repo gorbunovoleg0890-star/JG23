@@ -632,8 +632,8 @@ export default function App() {
       const perNode = Array.from(nodeGraph.nodesById.keys()).map((nodeId) => {
         const node = getNode(nodeId);
         const isConsumed = nodeGraph.consumedBy.has(nodeId);
-        const consumingOpId = nodeGraph.consumedBy.get(nodeId);
-        const consumingOp = consumingOpId ? mergeOps.find(op => op.id === consumingOpId) : null;
+        const consumedByOpId = nodeGraph.consumedBy.get(nodeId) || null;
+        const consumingOp = consumedByOpId ? mergeOps.find(op => op.id === consumedByOpId) : null;
         
         // Правильно считаем дату погашения для дочерних узлов
         let effectiveExpungementDate = '';
