@@ -5,7 +5,6 @@ import {
   FileText,
   Gavel,
   Plus,
-  Scale,
   Trash2
 } from 'lucide-react';
 import themis from './assets/themis.svg';
@@ -1131,7 +1130,7 @@ export default function App() {
           <div className="flex flex-wrap items-start justify-between gap-6">
             <div className="space-y-4">
               <div className="inline-flex items-center gap-2 rounded-full bg-law-200/20 px-4 py-2 text-sm text-law-100">
-                <Scale className="h-4 w-4" />
+                <Gavel className="h-6 w-6" />
                 Юридический калькулятор
               </div>
               <div className="flex items-center gap-3">
