@@ -666,15 +666,16 @@ export default function App() {
     if (!node) return '?';
     
     if (node.type === 'base') {
-      if (!node.conviction) return '?';
+      if (!node.conviction || typeof node.conviction !== 'object') return '?';
       if (!convictions || !Array.isArray(convictions)) return '?';
-      const idx = convictions.findIndex((c) => c && c.id === node.conviction.id);
+      const idx = (convictions).findIndex((c) => c && typeof c === 'object' && c.id === node.conviction?.id);
+      if (idx < 0) return '?';
       const dateStr = node.conviction?.verdictDate ? ` от ${formatDate(node.conviction.verdictDate)}` : '';
       return `Приговор №${idx + 1}${dateStr}`;
     }
     
     if (node.type === 'virtual') {
-      if (!node.mergeOp) return '?';
+      if (!node.mergeOp || typeof node.mergeOp !== 'object') return '?';
       const parentLabel = getNodeLabel(node.parentNodeId);
       const basis = node.mergeOp?.basis || '?';
       return `Соединённый (${basis}) — основной: ${parentLabel}`;
@@ -691,9 +692,9 @@ export default function App() {
   const getConvictionLabelByNodeId = (nodeId) => {
     if (!convictions || !Array.isArray(convictions)) return null;
     const idx = getConvictionIndexByNodeId(nodeId);
-    if (idx <= 0) return null;
+    if (idx <= 0 || idx > convictions.length) return null;
     const conv = convictions[idx - 1];
-    if (!conv) return null;
+    if (!conv || typeof conv !== 'object') return null;
     return `Приговор №${idx}${conv?.verdictDate ? ` от ${formatDate(conv.verdictDate)}` : ''}`;
   };
 
@@ -1037,7 +1038,7 @@ export default function App() {
         
         // Для parent operations: найти индекс parent conviction в convictions
         const parentConvictionIdx = parentOp 
-          ? convictions.findIndex(c => parentOp.parentNodeId === `conviction:${c.id}`)
+          ? (convictions || []).findIndex(c => c && parentOp.parentNodeId === `conviction:${c.id}`)
           : -1;
         
         // Для consuming operation (если результат этого приговора был поглощен):
@@ -1103,7 +1104,7 @@ export default function App() {
           ? op.parentNodeId.replace('conviction:', '')
           : null;
         const parentConvictionIdx = parentConvictionId
-          ? convictions.findIndex(c => c.id === parentConvictionId)
+          ? (convictions || []).findIndex(c => c && c.id === parentConvictionId)
           : -1;
         
         // Проверить, был ли этот узел поглощен другой операцией
