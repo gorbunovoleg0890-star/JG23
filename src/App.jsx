@@ -117,10 +117,12 @@ const getExpungementDate = (conviction) => {
   const { punishment, crimes, pre2013 } = conviction;
   const crimeCategory = crimes[0]?.category ?? 'средней тяжести';
   const isImprisonment = punishment.mainType === 'imprisonment' || punishment.mainType === 'life-imprisonment';
-  const actualEndDate = punishment.udoDate || punishment.mainEndDate;
-  const endDate = punishment.additionalEndDate && punishment.additionalEndDate > actualEndDate
+  
+  // Effective end date: UDO takes precedence, then mainEndDate, and additionalEndDate if later
+  const mainEffectiveDate = punishment.udoDate || punishment.mainEndDate;
+  const endDate = punishment.additionalEndDate && punishment.additionalEndDate > mainEffectiveDate
     ? punishment.additionalEndDate
-    : actualEndDate;
+    : mainEffectiveDate;
 
   if (!endDate) return '';
 
@@ -141,6 +143,15 @@ const getExpungementDate = (conviction) => {
   }
 
   return addYears(endDate, getCategoryTermYears(crimeCategory, pre2013));
+};
+
+// Helper: Get effective end date for expungement (considering UDO and additional punishment)
+const getEffectiveEndDate = (punishment) => {
+  if (!punishment) return '';
+  const mainEffectiveDate = punishment.udoDate || punishment.mainEndDate;
+  return punishment.additionalEndDate && punishment.additionalEndDate > mainEffectiveDate
+    ? punishment.additionalEndDate
+    : mainEffectiveDate;
 };
 
 // Helper: Find which merge operation controls this conviction node (if any)
@@ -695,22 +706,24 @@ export default function App() {
     if (!node) return '';
     
     if (node.type === 'base') {
+      // Check if this base node is consumed by a merge operation
+      const consumingOpId = nodeGraph.consumedBy.get(nodeId);
+      if (consumingOpId) {
+        const consumingOp = mergeOps.find(op => op.id === consumingOpId);
+        if (consumingOp) {
+          // Use date from the consuming operation (влившийся узел)
+          return getEffectiveEndDate(consumingOp.mergedPunishment);
+        }
+      }
+      
       // Base node: use conviction's own punishment data
       const punishment = node.conviction.punishment;
-      const actualEndDate = punishment.udoDate || punishment.mainEndDate;
-      return punishment.additionalEndDate && punishment.additionalEndDate > actualEndDate
-        ? punishment.additionalEndDate
-        : actualEndDate;
+      return getEffectiveEndDate(punishment);
     }
     
     if (node.type === 'virtual') {
       // Virtual node: use operation's merged punishment data
-      const mergedPunishment = node.mergeOp.mergedPunishment;
-      const actualEndDate = mergedPunishment.udoDate || mergedPunishment.mainEndDate;
-      return mergedPunishment.additionalEndDate && 
-             mergedPunishment.additionalEndDate > actualEndDate
-        ? mergedPunishment.additionalEndDate
-        : actualEndDate;
+      return getEffectiveEndDate(node.mergeOp.mergedPunishment);
     }
     
     return '';
@@ -725,7 +738,22 @@ export default function App() {
       basis: creatingOp.basis,
       childNodeIds: creatingOp.childNodeIds,
       parentNodeId: creatingOp.parentNodeId,
-      mergedPunishment: emptyPunishment(),
+      mergedPunishment: {
+        mainType: 'imprisonment',
+        mainReal: true,
+        mainConditional: false,
+        mainTermYears: 0,
+        mainTermMonths: 0,
+        conditionalCancelledDate: '',
+        probationYears: 0,
+        probationMonths: 0,
+        deferment: false,
+        defermentCancelledDate: '',
+        udoDate: '',
+        mainEndDate: '',
+        additionalType: '',
+        additionalServedDate: ''
+      },
       createdAt: new Date().toISOString()
     };
     
@@ -1080,7 +1108,7 @@ export default function App() {
 
       return { crime, assessment, perNode };
     });
-  }, [newCrimes, priorCrimes, nodeGraph, getRootNodeIds, mergeOps]);
+  }, [newCrimes, convictions, priorCrimes, nodeGraph, getRootNodeIds, mergeOps]);
 
   const updateCrime = (index, updates) => {
     setNewCrimes((prev) =>
@@ -1542,10 +1570,17 @@ export default function App() {
                     </button>
                   </div>
 
-                  <div className="mt-6 grid gap-4 md:grid-cols-2">
-                    {!consumingOp ? (
-                      <div className="rounded-2xl border border-white/10 bg-white/10 p-4 space-y-4">
+                  <div className="mt-6 space-y-4">
+                    {/* Блок "Вид наказания" - ВСЕГДА редактируемый */}
+                    <div className="rounded-2xl border border-white/10 bg-white/10 p-4 space-y-4">
                       <h4 className="text-sm font-semibold text-law-100">Вид наказания</h4>
+                      {consumingOp && (
+                        <div className="rounded-lg bg-law-200/20 border border-law-200/40 p-3">
+                          <p className="text-xs text-law-100/80">
+                            ℹ️ Этот приговор влился в соединение. Вы можете менять вид наказания для расчётов, но даты отбытия регулируются операцией соединения.
+                          </p>
+                        </div>
+                      )}
                       <Field label="Основное наказание">
                         <Select
                           value={conviction.punishment.mainType}
@@ -1653,31 +1688,76 @@ export default function App() {
                           />
                         </Field>
                       )}
-                      <Field label="Дата УДО (если было)">
-                        <input
-                          type="date"
-                          value={conviction.punishment.udoDate}
-                          onChange={(event) =>
-                            updateConviction(index, {
-                              punishment: {
-                                ...conviction.punishment,
-                                udoDate: event.target.value
-                              }
-                            })
-                          }
-                          className="rounded-xl border border-law-200/40 bg-white px-3 py-2 text-sm"
-                        />
-                      </Field>
+                      {conviction.punishment.deferment && (
+                        <Field label="Дата УДО (если было)">
+                          <input
+                            type="date"
+                            value={conviction.punishment.udoDate}
+                            onChange={(event) =>
+                              updateConviction(index, {
+                                punishment: {
+                                  ...conviction.punishment,
+                                  udoDate: event.target.value
+                                }
+                              })
+                            }
+                            className="rounded-xl border border-law-200/40 bg-white px-3 py-2 text-sm"
+                          />
+                        </Field>
+                      )}
+                    </div>
+
+                    {/* Блок "Сроки исполнения" - зависит от consumingOp и basis */}
+                    {consumingOp && consumingOp.basis.includes('70') ? (
+                      <div className="rounded-2xl border border-white/10 bg-white/10 p-4 space-y-4">
+                        <h4 className="text-sm font-semibold text-law-100">Сроки исполнения</h4>
+                        <div className="rounded-lg bg-law-200/20 border border-law-200/40 p-3">
+                          <p className="text-xs text-law-100/80">
+                            ⚠️ Приговор вошёл в операцию ст.70/74. Даты отбытия основного и доп. наказания определяются операцией соединения (см. блок «Операции соединения приговоров»). Редактирование дат запрещено в этом приговоре.
+                          </p>
+                        </div>
+                        <Field label="Дата УДО (по приговору)">
+                          <input
+                            type="date"
+                            disabled
+                            value={conviction.punishment.udoDate}
+                            className="rounded-xl border border-law-200/40 bg-white/50 px-3 py-2 text-sm text-gray-500"
+                          />
+                        </Field>
+                        <Field label="Дата отбытия основного наказания (по приговору)">
+                          <input
+                            type="date"
+                            disabled
+                            value={conviction.punishment.mainEndDate}
+                            className="rounded-xl border border-law-200/40 bg-white/50 px-3 py-2 text-sm text-gray-500"
+                          />
+                        </Field>
+                        {conviction.punishment.additionalType && (
+                          <>
+                            <Field label="Доп. наказание (по приговору)">
+                              <input
+                                type="text"
+                                disabled
+                                value={
+                                  punishmentTypes.find(
+                                    (pt) => pt.id === conviction.punishment.additionalType
+                                  )?.label || '—'
+                                }
+                                className="rounded-xl border border-law-200/40 bg-white/50 px-3 py-2 text-sm text-gray-500"
+                              />
+                            </Field>
+                            <Field label="Дата отбытия доп. наказания (по приговору)">
+                              <input
+                                type="date"
+                                disabled
+                                value={conviction.punishment.additionalEndDate}
+                                className="rounded-xl border border-law-200/40 bg-white/50 px-3 py-2 text-sm text-gray-500"
+                              />
+                            </Field>
+                          </>
+                        )}
                       </div>
                     ) : (
-                      <div className="rounded-2xl border border-white/10 bg-white/10 p-4 space-y-4">
-                        <div className="text-xs text-law-100/80">
-                          Приговор влился в соединение. Наказание и сроки регулируются параметрами операции соединения (основной узел или операция № в разделе операций).
-                        </div>
-                      </div>
-                    )}
-
-                    {!consumingOp && (
                     <div className="rounded-2xl border border-white/10 bg-white/10 p-4 space-y-4">
                       <h4 className="text-sm font-semibold text-law-100">Сроки исполнения</h4>
                       
@@ -1711,6 +1791,14 @@ export default function App() {
                                   type="date"
                                   disabled
                                   value={parentOp.mergedPunishment.mainEndDate}
+                                  className="rounded-xl border border-law-200/40 bg-white/50 px-3 py-2 text-sm text-gray-500"
+                                />
+                              </Field>
+                              <Field label="Дата УДО результата (из операции)">
+                                <input
+                                  type="date"
+                                  disabled
+                                  value={parentOp.mergedPunishment.udoDate || ''}
                                   className="rounded-xl border border-law-200/40 bg-white/50 px-3 py-2 text-sm text-gray-500"
                                 />
                               </Field>
@@ -1754,6 +1842,21 @@ export default function App() {
                                     punishment: {
                                       ...conviction.punishment,
                                       mainEndDate: event.target.value
+                                    }
+                                  })
+                                }
+                                className="rounded-xl border border-law-200/40 bg-white px-3 py-2 text-sm"
+                              />
+                            </Field>
+                            <Field label="Дата УДО (если было)">
+                              <input
+                                type="date"
+                                value={conviction.punishment.udoDate}
+                                onChange={(event) =>
+                                  updateConviction(index, {
+                                    punishment: {
+                                      ...conviction.punishment,
+                                      udoDate: event.target.value
                                     }
                                   })
                                 }
@@ -1976,7 +2079,7 @@ export default function App() {
                                   .map((item) => ({ value: item.id, label: item.label }))}
                               />
                             </Field>
-                            <Field label="Дата отбытия">
+                            <Field label="Дата отбытия основного">
                               <input
                                 type="date"
                                 value={op.mergedPunishment.mainEndDate}
@@ -1986,6 +2089,20 @@ export default function App() {
                                 className="rounded-xl border border-law-200/40 bg-white px-3 py-2 text-sm"
                               />
                             </Field>
+                          </div>
+                          <Field label="Дата УДО результата (если применимо)">
+                            <input
+                              type="date"
+                              value={op.mergedPunishment.udoDate || ''}
+                              onChange={(event) =>
+                                updateOpMergedPunishment(op.id, 'udoDate', event.target.value)
+                              }
+                              className="rounded-xl border border-law-200/40 bg-white px-3 py-2 text-sm"
+                              placeholder="Дата УДО"
+                            />
+                          </Field>
+                          <div className="text-xs text-law-100/70 italic">
+                            Если заполнена дата УДО — она используется для расчётов вместо даты отбытия основного наказания.
                           </div>
                           <div className="grid gap-2 md:grid-cols-2">
                             <Field label="Доп. наказание">
@@ -1998,7 +2115,7 @@ export default function App() {
                                 options={punishmentTypes.filter((item) => item.additional).map((item) => ({ value: item.id, label: item.label }))}
                               />
                             </Field>
-                            <Field label="Дата отбытия">
+                            <Field label="Дата отбытия доп. наказания">
                               <input
                                 type="date"
                                 value={op.mergedPunishment.additionalEndDate}
@@ -2013,9 +2130,9 @@ export default function App() {
 
                         <div className="text-xs text-law-100/80">
                           {op.basis.includes('70') ? (
-                            <div>По ст.70: при определении рецидива на дату нового преступления будет учитываться результат этой операции.</div>
+                            <div>ℹ️ Для ст.70/74: при определении рецидива на дату нового преступления будет учитываться результат этой операции. Даты исполнения берутся из полей результата выше.</div>
                           ) : (
-                            <div>По ч.5 ст.69: влившиеся узлы не учитываются отдельно для определения рецидива.</div>
+                            <div>ℹ️ Для ч.5 ст.69: влившиеся узлы не учитываются отдельно для определения рецидива, учёт ведётся по основному узлу (результату операции). Даты исполнения берутся из полей результата выше.</div>
                           )}
                         </div>
                       </div>
@@ -2138,17 +2255,24 @@ export default function App() {
                                 )}
                               </div>
                             )}
+                            
+                            {/* УДО информация */}
+                            {nodeInfo.punishment && nodeInfo.punishment.udoDate && (
+                              <div className="text-law-100/80 text-xs mb-1">УДО: дата {formatDate(nodeInfo.punishment.udoDate)}</div>
+                            )}
+                            
+                            {/* Доп. наказание информация */}
                             {nodeInfo.punishment && nodeInfo.punishment.additionalType ? (
-                              <div className="text-law-100/80 text-xs">Доп. наказание: {nodeInfo.punishment.additionalType} — дата отбытия: {nodeInfo.punishment.additionalEndDate ? formatDate(nodeInfo.punishment.additionalEndDate) : '—'}</div>
+                              <div className="text-law-100/80 text-xs">Доп. наказание: {punishmentTypes.find(pt => pt.id === nodeInfo.punishment.additionalType)?.label || nodeInfo.punishment.additionalType} — дата отбытия: {nodeInfo.punishment.additionalEndDate ? formatDate(nodeInfo.punishment.additionalEndDate) : '—'}</div>
                             ) : (
                               <div className="text-law-100/80 text-xs">Доп. наказание: нет</div>
                             )}
 
                             {/* Дата отбытия наказания */}
                             <div className="text-law-100/80 text-xs mt-2">
-                              <strong>Дата отбытия наказания:</strong>{' '}
+                              <strong>Дата отбытия/окончания исполнения:</strong>{' '}
                               {endDate ? (
-                                <span>{formatDate(endDate)}{isMergedNode && nodeInfo.parentOp ? <span className="text-law-100/70 ml-2">(по операции {nodeInfo.parentOp.basis})</span> : null}</span>
+                                <span>{formatDate(endDate)}{isMergedNode && nodeInfo.parentOp ? <span className="text-law-100/70 ml-2">(по результату операции {nodeInfo.parentOp.basis})</span> : (hasConsumingOp && nodeInfo.consumingOp ? <span className="text-law-100/70 ml-2">(по операции)</span> : <span className="text-law-100/70 ml-2">(по приговору)</span>)}</span>
                               ) : (
                                 hasConsumingOp && nodeInfo.consumingOp && nodeInfo.consumingOp.basis.includes('69')
                                   ? <span>см. основной приговор {parentLabel} (по ч.5 ст.69)</span>
@@ -2158,7 +2282,13 @@ export default function App() {
 
                             {nodeInfo.autoCancelledConditional && (
                               <div className="text-law-100/70 text-xs mt-1 italic">
-                                Условное осуждение отменено (ст. 74 УК РФ); наказание присоединено к {parentLabel} (ст. 70 УК РФ).
+                                ℹ️ Условное осуждение отменено (ст. 74 УК РФ); наказание присоединено к {parentLabel} (ст. 70 УК РФ).
+                              </div>
+                            )}
+                            
+                            {hasConsumingOp && nodeInfo.consumingOp && nodeInfo.consumingOp.basis.includes('70') && (
+                              <div className="text-law-100/70 text-xs mt-1 italic">
+                                ℹ️ Даты отбытия и дополнительного наказания определяются результатом операции ст.70/74 (операция №{mergeOps.findIndex(op => op.id === nodeInfo.consumingOp.id) + 1}).
                               </div>
                             )}
                           </div>
