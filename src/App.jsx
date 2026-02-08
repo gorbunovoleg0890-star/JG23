@@ -278,6 +278,136 @@ const getConvictionRecidivismStatus = (conviction, newCrimeDate, mergeGroups) =>
   };
 };
 
+// Helper: Определить рецидив по конкретному узлу за конкретное новое преступление
+const getNodeRecidivismStatus = (nodeId, newCrime, recidivismType) => {
+  // nodeId: 'conviction:xxx' или 'merge:xxx'
+  // newCrime: { intent, category, date, ... }
+  // recidivismType: тип рецидива на основе всех eligible узлов (или null если нет рецидива)
+  
+  // Правило 1: Новое преступление неумышленное
+  if (newCrime.intent !== 'умышленное') {
+    return {
+      hasRecidivism: false,
+      reason: 'новое преступление неумышленное (ч. 1 ст. 18 УК РФ)'
+    };
+  }
+  
+  // Правило 2: Новое преступление небольшой тяжести
+  if (newCrime.category === 'небольшой тяжести') {
+    return {
+      hasRecidivism: false,
+      reason: 'новое преступление небольшой тяжести'
+    };
+  }
+  
+  // Правило 3: Узел "влился" - не оценивается отдельно
+  const consumingOpId = nodeGraph.consumedBy.get(nodeId);
+  if (consumingOpId) {
+    const consumingOp = mergeOps.find(op => op.id === consumingOpId);
+    if (consumingOp) {
+      if (consumingOp.basis.includes('69')) {
+        const parentLabel = getNodeLabel(consumingOp.parentNodeId);
+        return {
+          hasRecidivism: false,
+          reason: `не оценивается отдельно (соединён по ч.5 ст.69; учёт по основному узлу ${parentLabel})`
+        };
+      } else {
+        const parentLabel = getNodeLabel(consumingOp.parentNodeId);
+        return {
+          hasRecidivism: false,
+          reason: `не оценивается отдельно (влился по ст.70/74; учёт по основному узлу ${parentLabel})`
+        };
+      }
+    }
+  }
+  
+  // Правило 4: Судимость погашена на дату нового преступления
+  const node = getNode(nodeId);
+  if (!node) {
+    return { hasRecidivism: false, reason: 'узел не найден' };
+  }
+  
+  const expungementDate = getNodeExpungementDate(nodeId);
+  const isActive = !expungementDate || newCrime.date < expungementDate;
+  
+  if (!isActive) {
+    return {
+      hasRecidivism: false,
+      reason: `судимость погашена на ${formatDate(expungementDate)}`
+    };
+  }
+  
+  // Правило 5: Проверить, подходит ли узел по ст.18 (умышленное, не малое, не несовершеннолетний)
+  let crimes = [];
+  if (node.type === 'base') {
+    crimes = node.conviction.crimes;
+  } else if (node.type === 'virtual') {
+    crimes = getUnderlyingCrimes(nodeId);
+  }
+  
+  // Проверить, есть ли неумышленные преступления
+  if (crimes.some(c => c.intent !== 'умышленное')) {
+    return {
+      hasRecidivism: false,
+      reason: 'узел содержит неумышленные преступления'
+    };
+  }
+  
+  // Проверить, есть ли малые преступления
+  if (crimes.some(c => c.category === 'небольшой тяжести')) {
+    return {
+      hasRecidivism: false,
+      reason: 'узел содержит преступления небольшой тяжести'
+    };
+  }
+  
+  // Проверить, есть ли несовершеннолетние преступления
+  if (crimes.some(c => c.juvenile)) {
+    return {
+      hasRecidivism: false,
+      reason: 'узел содержит преступления, совершённые несовершеннолетним'
+    };
+  }
+  
+  // Правило 6: Проверить условное/отсрочку
+  let punishment = null;
+  if (node.type === 'base') {
+    punishment = node.conviction.punishment;
+    if (punishment.mainConditional) {
+      const consumingOpId = nodeGraph.consumedBy.get(nodeId);
+      const consumingOp = consumingOpId ? mergeOps.find(op => op.id === consumingOpId) : null;
+      if (consumingOp && consumingOp.basis.includes('74')) {
+        // Условность автоматически отменена в ст.70+74
+      } else if (!punishment.conditionalCancelledDate) {
+        return {
+          hasRecidivism: false,
+          reason: 'условное осуждение не отменено'
+        };
+      }
+    }
+    if (punishment.deferment && !punishment.defermentCancelledDate) {
+      return {
+        hasRecidivism: false,
+        reason: 'отсрочка не отменена'
+      };
+    }
+  }
+  
+  // Все проверки пройдены - узел подходит
+  // Показать рецидив, определённый на основе всех eligible узлов
+  if (recidivismType) {
+    return {
+      hasRecidivism: true,
+      reason: `участвует в рецидиве (${recidivismType})`
+    };
+  } else {
+    return {
+      hasRecidivism: false,
+      reason: 'нет других активных подходящих судимостей'
+    };
+  }
+};
+
 const getRecidivismAssessment = (newCrime, eligibleEntries) => {
   // eligibleEntries - массив объектов { crime, conviction }
   // где conviction может содержать punishment либо из базового приговора, либо из mergedPunishment узла
@@ -1063,11 +1193,17 @@ export default function App() {
         crime: e.crimes[0],
         conviction: { punishment: e.punishment }
       })));
+      
+      // Тип рецидива для показа в карточках узлов (если есть рецидив)
+      const recidivTypeName = assessment.hasRecidivism ? assessment.type : null;
 
       // Helper: Создать nodeInfo для обычного приговора
       const createNodeInfoForConviction = (conviction, convictionIdx) => {
         const nodeId = `conviction:${conviction.id}`;
         const node = getNode(nodeId);
+        
+        // Рецидив по этому конкретному узлу
+        const nodeRecidivismStatus = getNodeRecidivismStatus(nodeId, crime, recidivTypeName);
         
         // Получить информацию об операциях этого приговора
         const parentOp = getParentOperation(conviction.id);
@@ -1127,6 +1263,8 @@ export default function App() {
           operationChain,
           consumingOp,
           consumingOpId,
+          // Рецидив по этому узлу
+          nodeRecidivismStatus,
           // Поля для отображения
           punishment,
           punishmentLabel,
@@ -1142,6 +1280,9 @@ export default function App() {
       const createNodeInfoForVirtualNode = (op, mergeOpIdx) => {
         const nodeId = `merge:${op.id}`;
         const node = getNode(nodeId);
+        
+        // Рецидив по этому конкретному узлу
+        const nodeRecidivismStatus = getNodeRecidivismStatus(nodeId, crime, recidivTypeName);
         
         // Получить информацию о родительском приговоре
         const parentConvictionId = op.parentNodeId.startsWith('conviction:') 
@@ -1191,6 +1332,8 @@ export default function App() {
           parentOpIdx: mergeOpIdx,
           consumingOp,
           consumingOpId,
+          // Рецидив по этому узлу
+          nodeRecidivismStatus,
           // Поля для отображения
           punishment,
           punishmentLabel,
@@ -2217,46 +2360,31 @@ export default function App() {
           <div className="space-y-6">
             {recidivismReport.map((entry, index) => (
               <div key={entry.crime.id} className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                {/* Итог по новому преступлению */}
-                <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-white/10">
-                  <div>
-                    <h3 className="text-sm font-semibold text-white">
-                      Преступление №{index + 1}
-                    </h3>
-                    <p className="text-xs text-law-100/80">
-                      Дата: {formatDate(entry.crime.date)} · Статья: {formatArticleRef(entry.crime)}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-sm font-semibold text-white">
-                      Рецидив: {entry.assessment.hasRecidivism ? 'ДА' : 'НЕТ'}
-                    </div>
-                    {entry.assessment.hasRecidivism && (
-                      <span className="text-xs text-law-100">
-                        Вид: {entry.assessment.type}
-                      </span>
-                    )}
-                  </div>
+                {/* Информация о новом преступлении */}
+                <div className="pb-4 border-b border-white/10">
+                  <h3 className="text-sm font-semibold text-white">
+                    Преступление №{index + 1}
+                  </h3>
+                  <p className="text-xs text-law-100/80 mt-1">
+                    Дата: {formatDate(entry.crime.date)} · Статья: {formatArticleRef(entry.crime)} · Категория: {entry.crime.category} · Форма вины: {entry.crime.intent}
+                  </p>
                 </div>
-                
-                <p className="mt-3 text-sm text-law-100/80">{entry.assessment.reason}</p>
 
                 {/* Анализ по узлам */}
                 <div className="mt-6">
-                  <h4 className="text-sm font-semibold text-white mb-4">Анализ по узлам (приговорам)</h4>
+                  <h4 className="text-sm font-semibold text-white mb-4">Анализ по узлам (приговорам/операциям)</h4>
                   <div className="space-y-4">
                     {entry.perNode.map((nodeInfo) => {
-                      // A) Шапка
+                      // A) Шапка узла
                       let nodeLabel = '';
                       if (nodeInfo.isVirtualNode) {
                         // Virtual node: результат операции
-                        const parentLabel = nodeInfo.parentOpIdx >= 0 
-                          ? `результат операции №${nodeInfo.parentOpIdx + 1} (${nodeInfo.parentOp.basis})`
-                          : 'результат операции';
-                        nodeLabel = `Соединённый приговор: ${parentLabel}`;
+                        const opIdx = (mergeOps || []).findIndex(op => op.id === nodeInfo.mergeOp.id);
+                        nodeLabel = `Результат операции (${nodeInfo.mergeOp.basis})`;
                       } else {
                         // Обычный приговор
-                        nodeLabel = `Приговор №${nodeInfo.convictionIdx + 1}${nodeInfo.conviction?.verdictDate ? ` от ${formatDate(nodeInfo.conviction.verdictDate)}` : ''}`;
+                        const convIdx = (convictions || []).findIndex(c => c && c.id === nodeInfo.conviction?.id);
+                        nodeLabel = `Приговор №${convIdx >= 0 ? convIdx + 1 : '?'}${nodeInfo.conviction?.verdictDate ? ` от ${formatDate(nodeInfo.conviction.verdictDate)}` : ''}`;
                       }
                       
                       // B) Наказание и его дата окончания
@@ -2318,22 +2446,6 @@ export default function App() {
                         }
                       }
                       
-                      // E) Рецидив по этому приговору
-                      let recidivLine = '';
-                      if (hasConsumingOp && nodeInfo.consumingOp) {
-                        const pLabel = nodeInfo.consumingOp.parentNodeId.startsWith('conviction:')
-                          ? getConvictionLabelByNodeId(nodeInfo.consumingOp.parentNodeId) || 'основной приговор'
-                          : 'основной узел';
-                        if (nodeInfo.consumingOp.basis.includes('69')) {
-                          recidivLine = `Рецидив по этому узлу: не оценивается отдельно (соединён по ч.5 ст.69; учёт по основному узлу ${pLabel}).`;
-                        } else if (nodeInfo.consumingOp.basis.includes('70')) {
-                          recidivLine = `Рецидив по этому узлу: не оценивается отдельно (влился по ст.70/74; учёт по основному узлу ${pLabel}).`;
-                        }
-                      } else {
-                        recidivLine = eligible 
-                          ? 'Рецидив по этому узлу: учитывается.'
-                          : `Рецидив по этому узлу: не учитывается — ${reason}`;
-                      }
 
                       return (
                         <div key={nodeInfo.nodeId} className="rounded-lg border border-law-200/40 bg-white/8 p-4 text-sm">
@@ -2436,9 +2548,13 @@ export default function App() {
                             }
                           </div>
 
-                          {/* Рецидив по этому приговору */}
-                          <div className="text-law-100/80 text-xs">
-                            {recidivLine}
+                          {/* Рецидив по этому узлу */}
+                          <div className="text-law-100/80 text-xs mt-4 pt-4 border-t border-law-200/20">
+                            <strong>Рецидив по этому узлу:</strong>{' '}
+                            {nodeInfo.nodeRecidivismStatus.hasRecidivism 
+                              ? <span className="text-accent-200 font-semibold">ДА — {nodeInfo.nodeRecidivismStatus.reason}</span>
+                              : <span>НЕТ — {nodeInfo.nodeRecidivismStatus.reason}</span>
+                            }
                           </div>
                         </div>
                       );
