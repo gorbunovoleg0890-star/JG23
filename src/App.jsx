@@ -113,300 +113,10 @@ const getJuvenileTerm = (category, isImprisonment) => {
   return { years: 1 };
 };
 
-const getExpungementDate = (conviction) => {
-  const { punishment, crimes, pre2013 } = conviction;
-  const crimeCategory = crimes[0]?.category ?? 'средней тяжести';
-  const isImprisonment = punishment.mainType === 'imprisonment' || punishment.mainType === 'life-imprisonment';
-  
-  // Effective end date: UDO takes precedence, then mainEndDate, and additionalEndDate if later
-  const mainEffectiveDate = punishment.udoDate || punishment.mainEndDate;
-  const endDate = punishment.additionalEndDate && punishment.additionalEndDate > mainEffectiveDate
-    ? punishment.additionalEndDate
-    : mainEffectiveDate;
-
-  if (!endDate) return '';
-
-  if (crimes.some((crime) => crime.juvenile)) {
-    const juvenileTerm = getJuvenileTerm(crimeCategory, isImprisonment);
-    if (juvenileTerm.months) {
-      return addMonths(endDate, juvenileTerm.months);
-    }
-    return addYears(endDate, juvenileTerm.years);
-  }
-
-  if (punishment.mainConditional) {
-    return endDate;
-  }
-
-  if (!isImprisonment) {
-    return addYears(endDate, 1);
-  }
-
-  return addYears(endDate, getCategoryTermYears(crimeCategory, pre2013));
-};
-
-// Helper: Get effective end date for expungement (considering UDO and additional punishment)
-const getEffectiveEndDate = (punishment) => {
-  if (!punishment) return '';
-  const mainEffectiveDate = punishment.udoDate || punishment.mainEndDate;
-  return punishment.additionalEndDate && punishment.additionalEndDate > mainEffectiveDate
-    ? punishment.additionalEndDate
-    : mainEffectiveDate;
-};
-
-// Helper: Find which merge operation controls this conviction node (if any)
-const getGoverningOperationForConviction = (convictionId, mergeOps) => {
-  if (!mergeOps) return null;
-  return mergeOps.find(op => {
-    const childConvictionIds = op.childNodeIds
-      .filter(id => id.startsWith('conviction:'))
-      .map(id => id.replace('conviction:', ''));
-    return childConvictionIds.includes(convictionId);
-  });
-};
-
 const getPriorCrimes = (convictions) =>
   convictions.flatMap((conviction) =>
     conviction.crimes.map((crime) => ({ crime, conviction }))
   );
-
-const isConvictionEligible = (entry, newCrimeDate) => {
-  const { crime, conviction } = entry;
-  const { punishment } = conviction;
-  const expungementDate = getExpungementDate(conviction);
-  const hasActiveRecord = !expungementDate || newCrimeDate < expungementDate;
-  const conditionalValid =
-    !punishment.mainConditional || Boolean(punishment.conditionalCancelledDate);
-  const defermentValid =
-    !punishment.deferment || Boolean(punishment.defermentCancelledDate);
-
-  return (
-    crime.intent === 'умышленное' &&
-    crime.category !== 'небольшой тяжести' &&
-    !crime.juvenile &&
-    hasActiveRecord &&
-    conditionalValid &&
-    defermentValid
-  );
-};
-
-const getConvictionRecidivismStatus = (conviction, newCrimeDate, mergeGroups) => {
-  // Найти группу, в которой находится эта судимость
-  const groupWithConviction = mergeGroups?.find(g => 
-    g.parentId === conviction.id || g.selectedIds.includes(conviction.id)
-  );
-
-  let expungementDate;
-  if (groupWithConviction && groupWithConviction.parentId === conviction.id) {
-    // Это основной приговор - использовать соединённое наказание
-    expungementDate = getExpungementDate({ ...conviction, punishment: groupWithConviction.mergedPunishment });
-  } else {
-    // Обычный приговор или судимость в группе - использовать свой срок
-    expungementDate = getExpungementDate(conviction);
-  }
-  const isActive = !expungementDate || newCrimeDate < expungementDate;
-
-  // Если судимость погашена
-  if (!isActive) {
-    return {
-      eligible: false,
-      reason: 'Рецидив не установлен: судимость погашена на дату нового преступления.',
-      expungementDate,
-      groupId: groupWithConviction?.id
-    };
-  }
-
-  // Проверить все преступления в этом приговоре
-  const { punishment } = conviction;
-  
-  // Проверка несовершеннолетства
-  if (conviction.crimes.some((crime) => crime.juvenile)) {
-    return {
-      eligible: false,
-      reason: 'Не учитывается для рецидива: преступление совершено до 18 лет.',
-      expungementDate,
-      groupId: groupWithConviction?.id
-    };
-  }
-
-  // Проверка формы вины
-  if (conviction.crimes.some((crime) => crime.intent !== 'умышленное')) {
-    return {
-      eligible: false,
-      reason: 'Не учитывается для рецидива: неумышленное преступление.',
-      expungementDate,
-      groupId: groupWithConviction?.id
-    };
-  }
-
-  // Проверка категории
-  if (conviction.crimes.some((crime) => crime.category === 'небольшой тяжести')) {
-    return {
-      eligible: false,
-      reason: 'Не учитывается для рецидива: преступление небольшой тяжести.',
-      expungementDate,
-      groupId: groupWithConviction?.id
-    };
-  }
-
-  // Проверка условного осуждения
-  if (punishment.mainConditional && !punishment.conditionalCancelledDate) {
-    return {
-      eligible: false,
-      reason: 'Не учитывается для рецидива: условное осуждение не отменено.',
-      expungementDate,
-      groupId: groupWithConviction?.id
-    };
-  }
-
-  // Проверка отсрочки
-  if (punishment.deferment && !punishment.defermentCancelledDate) {
-    return {
-      eligible: false,
-      reason: 'Не учитывается для рецидива: отсрочка не отменена.',
-      expungementDate,
-      groupId: groupWithConviction?.id
-    };
-  }
-
-  // Все проверки пройдены
-  return {
-    eligible: true,
-    reason: 'Учитывается.',
-    expungementDate,
-    groupId: groupWithConviction?.id
-  };
-};
-
-// Helper: Определить рецидив по конкретному узлу за конкретное новое преступление
-const getNodeRecidivismStatus = (nodeId, newCrime, recidivismType) => {
-  // nodeId: 'conviction:xxx' или 'merge:xxx'
-  // newCrime: { intent, category, date, ... }
-  // recidivismType: тип рецидива на основе всех eligible узлов (или null если нет рецидива)
-  
-  // Правило 1: Новое преступление неумышленное
-  if (newCrime.intent !== 'умышленное') {
-    return {
-      hasRecidivism: false,
-      reason: 'новое преступление неумышленное (ч. 1 ст. 18 УК РФ)'
-    };
-  }
-  
-  // Правило 2: Новое преступление небольшой тяжести
-  if (newCrime.category === 'небольшой тяжести') {
-    return {
-      hasRecidivism: false,
-      reason: 'новое преступление небольшой тяжести'
-    };
-  }
-  
-  // Правило 3: Узел "влился" - не оценивается отдельно
-  const consumingOpId = nodeGraph.consumedBy.get(nodeId);
-  if (consumingOpId) {
-    const consumingOp = mergeOps.find(op => op.id === consumingOpId);
-    if (consumingOp) {
-      if (consumingOp.basis.includes('69')) {
-        const parentLabel = getNodeLabel(consumingOp.parentNodeId);
-        return {
-          hasRecidivism: false,
-          reason: `не оценивается отдельно (соединён по ч.5 ст.69; учёт по основному узлу ${parentLabel})`
-        };
-      } else {
-        const parentLabel = getNodeLabel(consumingOp.parentNodeId);
-        return {
-          hasRecidivism: false,
-          reason: `не оценивается отдельно (влился по ст.70/74; учёт по основному узлу ${parentLabel})`
-        };
-      }
-    }
-  }
-  
-  // Правило 4: Судимость погашена на дату нового преступления
-  const node = getNode(nodeId);
-  if (!node) {
-    return { hasRecidivism: false, reason: 'узел не найден' };
-  }
-  
-  const expungementDate = getNodeExpungementDate(nodeId);
-  const isActive = !expungementDate || newCrime.date < expungementDate;
-  
-  if (!isActive) {
-    return {
-      hasRecidivism: false,
-      reason: `судимость погашена на ${formatDate(expungementDate)}`
-    };
-  }
-  
-  // Правило 5: Проверить, подходит ли узел по ст.18 (умышленное, не малое, не несовершеннолетний)
-  let crimes = [];
-  if (node.type === 'base') {
-    crimes = node.conviction.crimes;
-  } else if (node.type === 'virtual') {
-    crimes = getUnderlyingCrimes(nodeId);
-  }
-  
-  // Проверить, есть ли неумышленные преступления
-  if (crimes.some(c => c.intent !== 'умышленное')) {
-    return {
-      hasRecidivism: false,
-      reason: 'узел содержит неумышленные преступления'
-    };
-  }
-  
-  // Проверить, есть ли малые преступления
-  if (crimes.some(c => c.category === 'небольшой тяжести')) {
-    return {
-      hasRecidivism: false,
-      reason: 'узел содержит преступления небольшой тяжести'
-    };
-  }
-  
-  // Проверить, есть ли несовершеннолетние преступления
-  if (crimes.some(c => c.juvenile)) {
-    return {
-      hasRecidivism: false,
-      reason: 'узел содержит преступления, совершённые несовершеннолетним'
-    };
-  }
-  
-  // Правило 6: Проверить условное/отсрочку
-  let punishment = null;
-  if (node.type === 'base') {
-    punishment = node.conviction.punishment;
-    if (punishment.mainConditional) {
-      const consumingOpId = nodeGraph.consumedBy.get(nodeId);
-      const consumingOp = consumingOpId ? mergeOps.find(op => op.id === consumingOpId) : null;
-      if (consumingOp && consumingOp.basis.includes('74')) {
-        // Условность автоматически отменена в ст.70+74
-      } else if (!punishment.conditionalCancelledDate) {
-        return {
-          hasRecidivism: false,
-          reason: 'условное осуждение не отменено'
-        };
-      }
-    }
-    if (punishment.deferment && !punishment.defermentCancelledDate) {
-      return {
-        hasRecidivism: false,
-        reason: 'отсрочка не отменена'
-      };
-    }
-  }
-  
-  // Все проверки пройдены - узел подходит
-  // Показать рецидив, определённый на основе всех eligible узлов
-  if (recidivismType) {
-    return {
-      hasRecidivism: true,
-      reason: `участвует в рецидиве (${recidivismType})`
-    };
-  } else {
-    return {
-      hasRecidivism: false,
-      reason: 'нет других активных подходящих судимостей'
-    };
-  }
-};
 
 const getRecidivismAssessment = (newCrime, eligibleEntries) => {
   // eligibleEntries - массив объектов { crime, conviction }
@@ -1070,6 +780,104 @@ export default function App() {
   }, [convictions]);
 
   const recidivismReport = useMemo(() => {
+    // Helper: Определить рецидив по конкретному узлу за конкретное новое преступление
+    const getNodeRecidivismStatus = (nodeId, newCrime, recidivismType) => {
+      // Правило 1: Новое преступление неумышленное
+      if (newCrime.intent !== 'умышленное') {
+        return {
+          hasRecidivism: false,
+          reason: 'новое преступление неумышленное (ч. 1 ст. 18 УК РФ)'
+        };
+      }
+      
+      // Правило 2: Новое преступление небольшой тяжести
+      if (newCrime.category === 'небольшой тяжести') {
+        return {
+          hasRecidivism: false,
+          reason: 'новое преступление небольшой тяжести'
+        };
+      }
+      
+      // Правило 3: Узел "влился" - не оценивается отдельно
+      const consumingOpId = nodeGraph.consumedBy.get(nodeId);
+      if (consumingOpId) {
+        const consumingOp = mergeOps.find(op => op.id === consumingOpId);
+        if (consumingOp) {
+          if (consumingOp.basis && consumingOp.basis.includes('69')) {
+            const parentLabel = getNodeLabel(consumingOp.parentNodeId);
+            return {
+              hasRecidivism: false,
+              reason: `не оценивается отдельно (соединён по ч.5 ст.69; учёт по основному узлу ${parentLabel})`
+            };
+          } else {
+            const parentLabel = getNodeLabel(consumingOp.parentNodeId);
+            return {
+              hasRecidivism: false,
+              reason: `не оценивается отдельно (влился по ст.70/74; учёт по основному узлу ${parentLabel})`
+            };
+          }
+        }
+      }
+
+      // Правило 4: Судимость погашена на дату нового преступления
+      const node = getNode(nodeId);
+      if (!node) {
+        return { hasRecidivism: false, reason: 'узел не найден' };
+      }
+
+      const expungementDate = getNodeExpungementDate(nodeId);
+      const isActive = !expungementDate || newCrime.date < expungementDate;
+      
+      if (!isActive) {
+        return {
+          hasRecidivism: false,
+          reason: `судимость погашена на ${formatDate(expungementDate)}`
+        };
+      }
+
+      // Правило 5: Проверить, подходит ли узел по ст.18 (умышленное, не малое, не несовершеннолетний)
+      let crimes = [];
+      if (node.type === 'base') {
+        crimes = node.conviction.crimes || [];
+      } else if (node.type === 'virtual') {
+        crimes = getUnderlyingCrimes(nodeId) || [];
+      }
+
+      if (crimes.some(c => c.intent !== 'умышленное')) {
+        return { hasRecidivism: false, reason: 'узел содержит неумышленные преступления' };
+      }
+      if (crimes.some(c => c.category === 'небольшой тяжести')) {
+        return { hasRecidivism: false, reason: 'узел содержит преступления небольшой тяжести' };
+      }
+      if (crimes.some(c => c.juvenile)) {
+        return { hasRecidivism: false, reason: 'узел содержит преступления, совершённые несовершеннолетним' };
+      }
+
+      // Правило 6: Проверить условное/отсрочку
+      if (node.type === 'base') {
+        const punishment = node.conviction.punishment || {};
+        if (punishment.mainConditional) {
+          const consumingOpId2 = nodeGraph.consumedBy.get(nodeId);
+          const consumingOp2 = consumingOpId2 ? mergeOps.find(op => op.id === consumingOpId2) : null;
+          if (consumingOp2 && consumingOp2.basis && consumingOp2.basis.includes('74')) {
+            // considered cancelled by merge
+          } else if (!punishment.conditionalCancelledDate) {
+            return { hasRecidivism: false, reason: 'условное осуждение не отменено' };
+          }
+        }
+        if (punishment.deferment && !punishment.defermentCancelledDate) {
+          return { hasRecidivism: false, reason: 'отсрочка не отменена' };
+        }
+      }
+
+      // Все проверки пройдены - узел подходит
+      if (recidivismType) {
+        return { hasRecidivism: true, reason: `участвует в рецидиве (${recidivismType})` };
+      } else {
+        return { hasRecidivism: false, reason: 'нет других активных подходящих судимостей' };
+      }
+    };
+
     return newCrimes.map((crime) => {
       // ========== ВЫБОР УЗЛОВ ДЛЯ РЕЦИДИВА ==========
       // Правило: учитываются ONLY root nodes (не consumed)
