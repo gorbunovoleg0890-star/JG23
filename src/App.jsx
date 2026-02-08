@@ -412,18 +412,20 @@ export default function App() {
     const resultNodeById = new Map(); // mergeOpId -> resultNodeId
 
     // Add base nodes (convictions)
-    convictions.forEach((c) => {
+    (convictions || []).forEach((c) => {
+      if (!c) return;
       const nodeId = `conviction:${c.id}`;
       nodesById.set(nodeId, {
         id: nodeId,
         type: 'base',
         conviction: c,
-        verdictDate: c.verdictDate
+        verdictDate: c?.verdictDate || ''
       });
     });
 
     // Add merge operations and their result nodes
-    mergeOps.forEach((op) => {
+    (mergeOps || []).forEach((op) => {
+      if (!op) return;
       const resultNodeId = `merge:${op.id}`;
       resultNodeById.set(op.id, resultNodeId);
       
@@ -665,15 +667,16 @@ export default function App() {
     
     if (node.type === 'base') {
       if (!node.conviction) return '?';
-      const idx = convictions.findIndex((c) => c.id === node.conviction.id);
-      const dateStr = node.conviction.verdictDate ? ` от ${formatDate(node.conviction.verdictDate)}` : '';
+      if (!convictions || !Array.isArray(convictions)) return '?';
+      const idx = convictions.findIndex((c) => c && c.id === node.conviction.id);
+      const dateStr = node.conviction?.verdictDate ? ` от ${formatDate(node.conviction.verdictDate)}` : '';
       return `Приговор №${idx + 1}${dateStr}`;
     }
     
     if (node.type === 'virtual') {
       if (!node.mergeOp) return '?';
       const parentLabel = getNodeLabel(node.parentNodeId);
-      const basis = node.mergeOp.basis;
+      const basis = node.mergeOp?.basis || '?';
       return `Соединённый (${basis}) — основной: ${parentLabel}`;
     }
   };
@@ -686,11 +689,12 @@ export default function App() {
   };
 
   const getConvictionLabelByNodeId = (nodeId) => {
+    if (!convictions || !Array.isArray(convictions)) return null;
     const idx = getConvictionIndexByNodeId(nodeId);
     if (idx <= 0) return null;
     const conv = convictions[idx - 1];
     if (!conv) return null;
-    return `Приговор №${idx}${conv.verdictDate ? ` от ${formatDate(conv.verdictDate)}` : ''}`;
+    return `Приговор №${idx}${conv?.verdictDate ? ` от ${formatDate(conv.verdictDate)}` : ''}`;
   };
 
   // Helper: Check if conditional was automatically cancelled in a ст.70+74 operation
@@ -1156,14 +1160,14 @@ export default function App() {
       // Для справочного вывода: собрать базовые узлы (приговоры) и virtual nodes
       const perNode = [
         // Сначала обычные приговоры
-        ...convictions.map((conviction, idx) => createNodeInfoForConviction(conviction, idx)),
+        ...(convictions && Array.isArray(convictions) ? convictions.map((conviction, idx) => conviction ? createNodeInfoForConviction(conviction, idx) : null).filter(Boolean) : []),
         // Потом результаты операций (virtual nodes)
-        ...getRootMergeOpIds.map((opId, idx) => {
-          const op = mergeOps.find(o => o.id === opId);
+        ...(getRootMergeOpIds && Array.isArray(getRootMergeOpIds) ? getRootMergeOpIds.map((opId, idx) => {
+          const op = mergeOps?.find(o => o.id === opId);
           if (!op) return null;
-          const mergeOpIdx = mergeOps.findIndex(o => o.id === opId);
+          const mergeOpIdx = (mergeOps || []).findIndex(o => o.id === opId);
           return createNodeInfoForVirtualNode(op, mergeOpIdx);
-        }).filter(Boolean)
+        }).filter(Boolean) : [])
       ];
 
       return { crime, assessment, perNode };
