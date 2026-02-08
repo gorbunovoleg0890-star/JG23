@@ -682,6 +682,7 @@ export default function App() {
     const idx = getConvictionIndexByNodeId(nodeId);
     if (idx <= 0) return null;
     const conv = convictions[idx - 1];
+    if (!conv) return null;
     return `Приговор №${idx}${conv.verdictDate ? ` от ${formatDate(conv.verdictDate)}` : ''}`;
   };
 
@@ -1032,30 +1033,6 @@ export default function App() {
         const consumingOpId = nodeGraph.consumedBy.get(nodeId);
         const consumingOp = consumingOpId ? mergeOps.find(op => op.id === consumingOpId) : null;
         
-        // Считаем дату погашения (используется effective punishment)
-        const effectiveExpungementDate = getNodeExpungementDate(nodeId);
-        const isActive = !effectiveExpungementDate || crime.date < effectiveExpungementDate;
-
-        // Проверить eligibility
-        let eligible = false;
-        let reason = '';
-
-        if (!isActive) {
-          reason = 'Судимость погашена на дату нового преступления.';
-        } else {
-          const convictionEligible = isConvictionEligibleForRecidivism(
-            { crime: conviction.crimes[0], conviction },
-            crime.date
-          );
-          if (convictionEligible) {
-            eligible = true;
-            reason = 'Учитывается.';
-          } else {
-            const status = getConvictionRecidivismStatus(conviction, crime.date, []);
-            reason = status.reason;
-          }
-        }
-        
         // Получить информацию о наказании
         const punishment = getEffectivePunishment(conviction);
         const punishmentType = punishment.mainType;
@@ -1084,17 +1061,17 @@ export default function App() {
           node,
           conviction,
           convictionIdx,
-          expungementDate: effectiveExpungementDate,
-          eligible,
-          isActive,
-          reason,
+          expungementDate: null, // Will be calculated per-crime in section V
+          eligible: null, // Will be calculated per-crime in section V
+          isActive: null, // Will be calculated per-crime in section V
+          reason: '', // Will be calculated per-crime in section V
           parentOp,
           parentConvictionIdx,
           chainInfo,
           operationChain,
           consumingOp,
           consumingOpId,
-          // Новые поля для отображения
+          // Поля для отображения
           punishment,
           punishmentLabel,
           isConditional,
@@ -1122,42 +1099,6 @@ export default function App() {
         const consumingOpId = nodeGraph.consumedBy.get(nodeId);
         const consumingOp = consumingOpId ? mergeOps.find(op => op.id === consumingOpId) : null;
         
-        // Считаем дату погашения (используется merged punishment)
-        const effectiveExpungementDate = getNodeExpungementDate(nodeId);
-        const isActive = !effectiveExpungementDate || crime.date < effectiveExpungementDate;
-
-        // Проверить eligibility - для virtual node используем все underlying crimes
-        let eligible = false;
-        let reason = '';
-
-        if (!isActive) {
-          reason = 'Судимость погашена на дату нового преступления.';
-        } else {
-          // Для virtual node: собрать все underlying crimes и проверить
-          const underlyingConvictions = getUnderlyingConvictions(nodeId);
-          const allCrimesAreJuvenile = underlyingConvictions.every(c => c.crimes.some(crime => crime.juvenile));
-          const allCrimesAreNegligent = underlyingConvictions.every(c => c.crimes.every(crime => crime.intent !== 'умышленное'));
-          const allCrimesAreSmall = underlyingConvictions.every(c => c.crimes.every(crime => crime.category === 'небольшой тяжести'));
-          
-          if (allCrimesAreJuvenile) {
-            reason = 'Не учитывается для рецидива: преступления совершены до 18 лет.';
-          } else if (allCrimesAreNegligent) {
-            reason = 'Не учитывается для рецидива: неумышленные преступления.';
-          } else if (allCrimesAreSmall) {
-            reason = 'Не учитывается для рецидива: преступления небольшой тяжести.';
-          } else {
-            const punishment = op.mergedPunishment;
-            if (punishment.mainConditional && !punishment.conditionalCancelledDate) {
-              reason = 'Не учитывается для рецидива: условное осуждение.';
-            } else if (punishment.deferment && !punishment.defermentCancelledDate) {
-              reason = 'Не учитывается для рецидива: отсрочка.';
-            } else {
-              eligible = true;
-              reason = 'Учитывается.';
-            }
-          }
-        }
-        
         // Получить информацию о наказании
         const punishment = op.mergedPunishment;
         const punishmentType = punishment.mainType;
@@ -1184,12 +1125,12 @@ export default function App() {
           nodeId,
           node,
           conviction: null, // Нет обычного conviction для virtual node
-          convictionIdx: -1, // Но есть родительский приговор
+          convictionIdx: -1,
           parentConvictionIdx,
-          expungementDate: effectiveExpungementDate,
-          eligible,
-          isActive,
-          reason,
+          expungementDate: null, // Will be calculated per-crime in section V
+          eligible: null, // Will be calculated per-crime in section V
+          isActive: null, // Will be calculated per-crime in section V
+          reason: '', // Will be calculated per-crime in section V
           parentOp: op,
           parentOpIdx: mergeOpIdx,
           consumingOp,
@@ -2308,8 +2249,54 @@ export default function App() {
                       // C) Связь/операция
                       const hasConsumingOp = nodeInfo.consumingOp !== null;
                       
-                      // D) Дата погашения судимости
-                      const expungementDate = nodeInfo.expungementDate;
+                      // D) Дата погашения судимости - вычислить из crime context
+                      const effectiveExpungementDate = getNodeExpungementDate(nodeInfo.nodeId);
+                      const isActive = !effectiveExpungementDate || entry.crime.date < effectiveExpungementDate;
+                      
+                      // Calculate eligibility based on crime date
+                      let eligible = false;
+                      let reason = '';
+                      
+                      if (!isActive) {
+                        reason = 'Судимость погашена на дату нового преступления.';
+                      } else if (hasConsumingOp && nodeInfo.consumingOp) {
+                        // Node was consumed by an operation, eligibility is not separate
+                        reason = nodeInfo.consumingOp.basis.includes('69')
+                          ? 'Не оценивается отдельно (соединён по ч.5 ст.69; учёт по основному узлу).'
+                          : 'Не оценивается отдельно (влился по ст.70/74; учёт по основному узлу).';
+                      } else {
+                        // Calculate eligibility for non-consumed nodes
+                        if (nodeInfo.isVirtualNode) {
+                          // Virtual node: check underlying crimes
+                          const underlyingConvictions = getUnderlyingConvictions(nodeInfo.nodeId);
+                          const allCrimesAreJuvenile = underlyingConvictions.every(c => c.crimes.some(crime => crime.juvenile));
+                          const allCrimesAreNegligent = underlyingConvictions.every(c => c.crimes.every(crime => crime.intent !== 'умышленное'));
+                          const allCrimesAreSmall = underlyingConvictions.every(c => c.crimes.every(crime => crime.category === 'небольшой тяжести'));
+                          
+                          if (allCrimesAreJuvenile) {
+                            reason = 'Не учитывается для рецидива: преступления совершены до 18 лет.';
+                          } else if (allCrimesAreNegligent) {
+                            reason = 'Не учитывается для рецидива: неумышленные преступления.';
+                          } else if (allCrimesAreSmall) {
+                            reason = 'Не учитывается для рецидива: преступления небольшой тяжести.';
+                          } else {
+                            const punishment = nodeInfo.punishment;
+                            if (punishment.mainConditional && !punishment.conditionalCancelledDate) {
+                              reason = 'Не учитывается для рецидива: условное осуждение.';
+                            } else if (punishment.deferment && !punishment.defermentCancelledDate) {
+                              reason = 'Не учитывается для рецидива: отсрочка.';
+                            } else {
+                              eligible = true;
+                              reason = 'Учитывается.';
+                            }
+                          }
+                        } else {
+                          // Regular conviction: use existing eligibility logic
+                          const status = getConvictionRecidivismStatus(nodeInfo.conviction, entry.crime.date, []);
+                          eligible = status.eligible;
+                          reason = status.reason;
+                        }
+                      }
                       
                       // E) Рецидив по этому приговору
                       let recidivLine = '';
@@ -2323,9 +2310,9 @@ export default function App() {
                           recidivLine = `Рецидив по этому узлу: не оценивается отдельно (влился по ст.70/74; учёт по основному узлу ${pLabel}).`;
                         }
                       } else {
-                        recidivLine = nodeInfo.eligible 
+                        recidivLine = eligible 
                           ? 'Рецидив по этому узлу: учитывается.'
-                          : `Рецидив по этому узлу: не учитывается — ${nodeInfo.reason}`;
+                          : `Рецидив по этому узлу: не учитывается — ${reason}`;
                       }
 
                       return (
@@ -2423,8 +2410,8 @@ export default function App() {
                           {/* Дата погашения судимости */}
                           <div className="mb-3 pb-3 border-b border-law-200/20 text-law-100/90">
                             <strong>Дата погашения судимости:</strong>{' '}
-                            {expungementDate 
-                              ? <span className="text-law-100/80">{formatDate(expungementDate)}</span>
+                            {effectiveExpungementDate 
+                              ? <span className="text-law-100/80">{formatDate(effectiveExpungementDate)}</span>
                               : <em className="text-law-100/70">не рассчитана (не заполнена дата окончания наказания)</em>
                             }
                           </div>
