@@ -434,7 +434,9 @@ export default function App() {
 
       // Find parent node to get its verdictDate
       const parentNode = nodesById.get(op.parentNodeId);
-      const parentVerdictDate = parentNode?.verdictDate || '';
+      const parentVerdictDate = parentNode
+        ? (parentNode.type === 'base' ? parentNode.conviction.verdictDate : parentNode.verdictDate)
+        : '';
 
       // Create virtual node
       nodesById.set(resultNodeId, {
@@ -658,7 +660,7 @@ export default function App() {
     
     if (node.type === 'base') {
       const idx = convictions.findIndex((c) => c.id === node.conviction.id);
-      const dateStr = node.verdictDate ? ` от ${formatDate(node.verdictDate)}` : '';
+      const dateStr = node.conviction.verdictDate ? ` от ${formatDate(node.conviction.verdictDate)}` : '';
       return `Приговор №${idx + 1}${dateStr}`;
     }
     
