@@ -752,7 +752,7 @@ export default function App() {
         udoDate: '',
         mainEndDate: '',
         additionalType: '',
-        additionalServedDate: ''
+        additionalEndDate: ''
       },
       createdAt: new Date().toISOString()
     };
@@ -1005,9 +1005,8 @@ export default function App() {
         conviction: { punishment: e.punishment }
       })));
 
-      // Для справочного вывода: собрать только базовые узлы (приговоры) с информацией
-      // о цепочках операций, которые на них влияют
-      const perNode = convictions.map((conviction, convictionIdx) => {
+      // Helper: Создать nodeInfo для обычного приговора
+      const createNodeInfoForConviction = (conviction, convictionIdx) => {
         const nodeId = `conviction:${conviction.id}`;
         const node = getNode(nodeId);
         
@@ -1077,9 +1076,6 @@ export default function App() {
         } else {
           punishmentLabel = 'иное наказание';
         }
-        
-        // Тип наказания для отображения
-        const mainPunishmentType = punishmentLabel;
 
         return {
           nodeId,
@@ -1098,13 +1094,127 @@ export default function App() {
           consumingOpId,
           // Новые поля для отображения
           punishment,
-          punishmentLabel: mainPunishmentType,
+          punishmentLabel,
           isConditional,
           isReal,
           autoCancelledConditional,
-          consumerOp: consumingOp
+          consumerOp: consumingOp,
+          isVirtualNode: false
         };
-      });
+      };
+
+      // Helper: Создать nodeInfo для virtual node (результата операции)
+      const createNodeInfoForVirtualNode = (op, mergeOpIdx) => {
+        const nodeId = `merge:${op.id}`;
+        const node = getNode(nodeId);
+        
+        // Получить информацию о родительском приговоре
+        const parentConvictionId = op.parentNodeId.startsWith('conviction:') 
+          ? op.parentNodeId.replace('conviction:', '')
+          : null;
+        const parentConvictionIdx = parentConvictionId
+          ? convictions.findIndex(c => c.id === parentConvictionId)
+          : -1;
+        
+        // Проверить, был ли этот узел поглощен другой операцией
+        const consumingOpId = nodeGraph.consumedBy.get(nodeId);
+        const consumingOp = consumingOpId ? mergeOps.find(op => op.id === consumingOpId) : null;
+        
+        // Считаем дату погашения (используется merged punishment)
+        const effectiveExpungementDate = getNodeExpungementDate(nodeId);
+        const isActive = !effectiveExpungementDate || crime.date < effectiveExpungementDate;
+
+        // Проверить eligibility - для virtual node используем все underlying crimes
+        let eligible = false;
+        let reason = '';
+
+        if (!isActive) {
+          reason = 'Судимость погашена на дату нового преступления.';
+        } else {
+          // Для virtual node: собрать все underlying crimes и проверить
+          const underlyingConvictions = getUnderlyingConvictions(nodeId);
+          const allCrimesAreJuvenile = underlyingConvictions.every(c => c.crimes.some(crime => crime.juvenile));
+          const allCrimesAreNegligent = underlyingConvictions.every(c => c.crimes.every(crime => crime.intent !== 'умышленное'));
+          const allCrimesAreSmall = underlyingConvictions.every(c => c.crimes.every(crime => crime.category === 'небольшой тяжести'));
+          
+          if (allCrimesAreJuvenile) {
+            reason = 'Не учитывается для рецидива: преступления совершены до 18 лет.';
+          } else if (allCrimesAreNegligent) {
+            reason = 'Не учитывается для рецидива: неумышленные преступления.';
+          } else if (allCrimesAreSmall) {
+            reason = 'Не учитывается для рецидива: преступления небольшой тяжести.';
+          } else {
+            const punishment = op.mergedPunishment;
+            if (punishment.mainConditional && !punishment.conditionalCancelledDate) {
+              reason = 'Не учитывается для рецидива: условное осуждение.';
+            } else if (punishment.deferment && !punishment.defermentCancelledDate) {
+              reason = 'Не учитывается для рецидива: отсрочка.';
+            } else {
+              eligible = true;
+              reason = 'Учитывается.';
+            }
+          }
+        }
+        
+        // Получить информацию о наказании
+        const punishment = op.mergedPunishment;
+        const punishmentType = punishment.mainType;
+        const isReal = punishment.mainReal;
+        const isConditional = punishment.mainConditional;
+        
+        // Определить тип наказания для отображения
+        let punishmentLabel = '';
+        if (punishmentType === 'imprisonment' || punishmentType === 'life-imprisonment') {
+          if (isConditional) {
+            punishmentLabel = 'лишение свободы условно';
+          } else {
+            punishmentLabel = 'лишение свободы';
+          }
+        } else if (punishmentType === 'fine') {
+          punishmentLabel = 'штраф';
+        } else if (punishmentType === 'restriction') {
+          punishmentLabel = 'ограничение свободы';
+        } else {
+          punishmentLabel = 'иное наказание';
+        }
+
+        return {
+          nodeId,
+          node,
+          conviction: null, // Нет обычного conviction для virtual node
+          convictionIdx: -1, // Но есть родительский приговор
+          parentConvictionIdx,
+          expungementDate: effectiveExpungementDate,
+          eligible,
+          isActive,
+          reason,
+          parentOp: op,
+          parentOpIdx: mergeOpIdx,
+          consumingOp,
+          consumingOpId,
+          // Поля для отображения
+          punishment,
+          punishmentLabel,
+          isConditional,
+          isReal,
+          autoCancelledConditional: false,
+          isVirtualNode: true,
+          mergeOp: op
+        };
+      };
+
+      // Для справочного вывода: собрать базовые узлы (приговоры) и virtual nodes
+      const perNode = [
+        // Сначала обычные приговоры
+        ...convictions.map((conviction, idx) => createNodeInfoForConviction(conviction, idx)),
+        // Потом результаты операций (virtual nodes)
+        ...getRootMergeOpIds.map((opId, idx) => {
+          const op = mergeOps.find(o => o.id === opId);
+          if (!op) return null;
+          const mergeOpIdx = mergeOps.findIndex(o => o.id === opId);
+          return createNodeInfoForVirtualNode(op, mergeOpIdx);
+        }).filter(Boolean)
+      ];
 
       return { crime, assessment, perNode };
     });
@@ -2178,14 +2288,23 @@ export default function App() {
                   <div className="space-y-4">
                     {entry.perNode.map((nodeInfo) => {
                       // A) Шапка
-                      const nodeLabel = `Приговор №${nodeInfo.convictionIdx + 1}${nodeInfo.conviction.verdictDate ? ` от ${formatDate(nodeInfo.conviction.verdictDate)}` : ''}`;
+                      let nodeLabel = '';
+                      if (nodeInfo.isVirtualNode) {
+                        // Virtual node: результат операции
+                        const parentLabel = nodeInfo.parentOpIdx >= 0 
+                          ? `результат операции №${nodeInfo.parentOpIdx + 1} (${nodeInfo.parentOp.basis})`
+                          : 'результат операции';
+                        nodeLabel = `Соединённый приговор: ${parentLabel}`;
+                      } else {
+                        // Обычный приговор
+                        nodeLabel = `Приговор №${nodeInfo.convictionIdx + 1}${nodeInfo.conviction?.verdictDate ? ` от ${formatDate(nodeInfo.conviction.verdictDate)}` : ''}`;
+                      }
                       
                       // B) Наказание и его дата окончания
                       const endDate = getNodeEndDateForExpungement(nodeInfo.nodeId);
                       
                       // C) Связь/операция
                       const hasConsumingOp = nodeInfo.consumingOp !== null;
-                      const isMergedNode = nodeInfo.parentOp !== null;
                       
                       // D) Дата погашения судимости
                       const expungementDate = nodeInfo.expungementDate;
@@ -2193,31 +2312,18 @@ export default function App() {
                       // E) Рецидив по этому приговору
                       let recidivLine = '';
                       if (hasConsumingOp && nodeInfo.consumingOp) {
+                        const pLabel = nodeInfo.consumingOp.parentNodeId.startsWith('conviction:')
+                          ? getConvictionLabelByNodeId(nodeInfo.consumingOp.parentNodeId) || 'основной приговор'
+                          : 'основной узел';
                         if (nodeInfo.consumingOp.basis.includes('69')) {
-                          const parentIdx = nodeInfo.convictionIdx; // Нужно найти правильный индекс parent
-                          recidivLine = `Рецидив по этому приговору: не оценивается отдельно (соединён по ч.5 ст.69, учёт по основному узлу №${nodeInfo.parentConvictionIdx + 1}).`;
+                          recidivLine = `Рецидив по этому узлу: не оценивается отдельно (соединён по ч.5 ст.69; учёт по основному узлу ${pLabel}).`;
                         } else if (nodeInfo.consumingOp.basis.includes('70')) {
-                          recidivLine = `Рецидив по этому приговору: не оценивается отдельно (влился по ст.70/74; учёт по основному узлу №${nodeInfo.parentConvictionIdx + 1}).`;
+                          recidivLine = `Рецидив по этому узлу: не оценивается отдельно (влился по ст.70/74; учёт по основному узлу ${pLabel}).`;
                         }
                       } else {
                         recidivLine = nodeInfo.eligible 
-                          ? 'Рецидив по этому приговору: учитывается.'
-                          : `Рецидив по этому приговору: не учитывается — судимость погашена на дату нового преступления.`;
-                      }
-                      
-                      // Build parent label for consuming operation (if any)
-                      const parentLabel = nodeInfo.consumingOp ? (getConvictionLabelByNodeId(nodeInfo.consumingOp.parentNodeId) || 'основной приговор') : 'основной приговор';
-                      const parentIdx = nodeInfo.consumingOp ? getConvictionIndexByNodeId(nodeInfo.consumingOp.parentNodeId) : 0;
-
-                      // Rebuild recidiv line with proper labels
-                      if (hasConsumingOp && nodeInfo.consumingOp) {
-                        if (nodeInfo.consumingOp.basis.includes('69')) {
-                          recidivLine = `Рецидив по этому приговору: не оценивается отдельно (соединён по ч.5 ст.69; учёт по основному приговору ${parentLabel}).`;
-                        } else if (nodeInfo.consumingOp.basis.includes('70') && nodeInfo.consumingOp.basis.includes('74')) {
-                          recidivLine = `Рецидив по этому приговору: не оценивается отдельно (влился по ст.70/74; учёт по основному приговору ${parentLabel}).`;
-                        } else {
-                          recidivLine = `Рецидив по этому приговору: не оценивается отдельно (учёт по основному приговору ${parentLabel}).`;
-                        }
+                          ? 'Рецидив по этому узлу: учитывается.'
+                          : `Рецидив по этому узлу: не учитывается — ${nodeInfo.reason}`;
                       }
 
                       return (
@@ -2226,20 +2332,39 @@ export default function App() {
                           <div className="font-semibold text-law-100 mb-3 text-base">{nodeLabel}</div>
 
                           {/* Реквизиты */}
-                          <div className="text-law-100/90 mb-3 text-xs">
-                            <div><strong>Дата приговора:</strong> {nodeInfo.conviction.verdictDate ? formatDate(nodeInfo.conviction.verdictDate) : '—'}</div>
-                            <div><strong>Дата вступления в силу:</strong> {nodeInfo.conviction.legalDate ? formatDate(nodeInfo.conviction.legalDate) : '—'}</div>
-                          </div>
+                          {nodeInfo.isVirtualNode ? (
+                            <div className="text-law-100/90 mb-3 text-xs">
+                              <div><strong>Основание соединения:</strong> {nodeInfo.parentOp?.basis || '—'}</div>
+                              <div><strong>Основной узел:</strong> {nodeInfo.parentConvictionIdx >= 0 ? `Приговор №${nodeInfo.parentConvictionIdx + 1}` : '—'}</div>
+                            </div>
+                          ) : (
+                            <div className="text-law-100/90 mb-3 text-xs">
+                              <div><strong>Дата приговора:</strong> {nodeInfo.conviction?.verdictDate ? formatDate(nodeInfo.conviction.verdictDate) : '—'}</div>
+                              <div><strong>Дата вступления в силу:</strong> {nodeInfo.conviction?.legalDate ? formatDate(nodeInfo.conviction.legalDate) : '—'}</div>
+                            </div>
+                          )}
 
                           {/* Преступления */}
-                          <div className="mb-3 pb-3 border-b border-law-200/20">
-                            <div className="text-law-100/90 mb-2"><strong>Преступления по приговору:</strong></div>
-                            {nodeInfo.conviction.crimes.map((crime, idx) => (
-                              <div key={crime.id} className="text-law-100/80 text-xs mb-1">
-                                Дата совершения: {formatDate(crime.date)} · Статья: {formatArticleRef(crime)}{crime.partId ? '' : ''} · Категория: {crime.category} · Вина: {crime.intent}
-                              </div>
-                            ))}
-                          </div>
+                          {!nodeInfo.isVirtualNode && (
+                            <div className="mb-3 pb-3 border-b border-law-200/20">
+                              <div className="text-law-100/90 mb-2"><strong>Преступления по приговору:</strong></div>
+                              {nodeInfo.conviction?.crimes?.map((crime, idx) => (
+                                <div key={crime.id} className="text-law-100/80 text-xs mb-1">
+                                  Дата совершения: {formatDate(crime.date)} · Статья: {formatArticleRef(crime)} · Категория: {crime.category} · Вина: {crime.intent}
+                                </div>
+                              )) || <div className="text-law-100/80 text-xs">Не определены</div>}
+                            </div>
+                          )}
+                          {nodeInfo.isVirtualNode && (
+                            <div className="mb-3 pb-3 border-b border-law-200/20">
+                              <div className="text-law-100/90 mb-2"><strong>Соединённые преступления:</strong></div>
+                              {getUnderlyingCrimes(nodeInfo.nodeId).map((crime, idx) => (
+                                <div key={`${nodeInfo.nodeId}-crime-${idx}`} className="text-law-100/80 text-xs mb-1">
+                                  Дата: {formatDate(crime.date)} · Статья: {formatArticleRef(crime)} · Категория: {crime.category}
+                                </div>
+                              )) || <div className="text-law-100/80 text-xs">Не определены</div>}
+                            </div>
+                          )}
 
                           {/* Наказание (основное и доп.) */}
                           <div className="mb-3 pb-3 border-b border-law-200/20 text-law-100/90">
@@ -2272,23 +2397,23 @@ export default function App() {
                             <div className="text-law-100/80 text-xs mt-2">
                               <strong>Дата отбытия/окончания исполнения:</strong>{' '}
                               {endDate ? (
-                                <span>{formatDate(endDate)}{isMergedNode && nodeInfo.parentOp ? <span className="text-law-100/70 ml-2">(по результату операции {nodeInfo.parentOp.basis})</span> : (hasConsumingOp && nodeInfo.consumingOp ? <span className="text-law-100/70 ml-2">(по операции)</span> : <span className="text-law-100/70 ml-2">(по приговору)</span>)}</span>
+                                <span>{formatDate(endDate)}{nodeInfo.isVirtualNode ? <span className="text-law-100/70 ml-2">(по результату операции {nodeInfo.parentOp?.basis})</span> : (hasConsumingOp && nodeInfo.consumingOp ? <span className="text-law-100/70 ml-2">(по операции)</span> : <span className="text-law-100/70 ml-2">(по приговору)</span>)}</span>
                               ) : (
                                 hasConsumingOp && nodeInfo.consumingOp && nodeInfo.consumingOp.basis.includes('69')
-                                  ? <span>см. основной приговор {parentLabel} (по ч.5 ст.69)</span>
+                                  ? <span>см. основной узел (по ч.5 ст.69)</span>
                                   : <em className="text-law-100/70">не заполнена дата окончания наказания</em>
                               )}
                             </div>
 
                             {nodeInfo.autoCancelledConditional && (
                               <div className="text-law-100/70 text-xs mt-1 italic">
-                                ℹ️ Условное осуждение отменено (ст. 74 УК РФ); наказание присоединено к {parentLabel} (ст. 70 УК РФ).
+                                ℹ️ Условное осуждение отменено (ст. 74 УК РФ); наказание присоединено к основному узлу (ст. 70 УК РФ).
                               </div>
                             )}
                             
                             {hasConsumingOp && nodeInfo.consumingOp && nodeInfo.consumingOp.basis.includes('70') && (
                               <div className="text-law-100/70 text-xs mt-1 italic">
-                                ℹ️ Даты отбытия и дополнительного наказания определяются результатом операции ст.70/74 (операция №{mergeOps.findIndex(op => op.id === nodeInfo.consumingOp.id) + 1}).
+                                ℹ️ Даты исполнения определяются результатом операции ст.70/74.
                               </div>
                             )}
                           </div>

@@ -302,8 +302,8 @@ export function createGorbunovPreset() {
           defermentCancelledDate: '',
           udoDate: '',
           mainEndDate: '2018-12-01',
-          additionalType: '',
-          additionalEndDate: ''
+          additionalType: null,
+          additionalEndDate: null
         },
         createdAt: new Date().toISOString()
       },
@@ -328,8 +328,8 @@ export function createGorbunovPreset() {
           defermentCancelledDate: '',
           udoDate: '',
           mainEndDate: '2024-01-01',
-          additionalType: '',
-          additionalEndDate: ''
+          additionalType: null,
+          additionalEndDate: null
         },
         createdAt: new Date().toISOString()
       },
@@ -354,8 +354,8 @@ export function createGorbunovPreset() {
           defermentCancelledDate: '',
           udoDate: '',
           mainEndDate: '2025-12-01',
-          additionalType: '',
-          additionalEndDate: ''
+          additionalType: null,
+          additionalEndDate: null
         },
         createdAt: new Date().toISOString()
       }
