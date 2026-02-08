@@ -434,9 +434,14 @@ export default function App() {
 
       // Find parent node to get its verdictDate
       const parentNode = nodesById.get(op.parentNodeId);
-      const parentVerdictDate = parentNode
-        ? (parentNode.type === 'base' ? parentNode.conviction.verdictDate : parentNode.verdictDate)
-        : '';
+      let parentVerdictDate = '';
+      if (parentNode) {
+        if (parentNode.type === 'base' && parentNode.conviction) {
+          parentVerdictDate = parentNode.conviction.verdictDate || '';
+        } else if (parentNode.type === 'virtual') {
+          parentVerdictDate = parentNode.verdictDate || '';
+        }
+      }
 
       // Create virtual node
       nodesById.set(resultNodeId, {
@@ -659,12 +664,14 @@ export default function App() {
     if (!node) return '?';
     
     if (node.type === 'base') {
+      if (!node.conviction) return '?';
       const idx = convictions.findIndex((c) => c.id === node.conviction.id);
       const dateStr = node.conviction.verdictDate ? ` от ${formatDate(node.conviction.verdictDate)}` : '';
       return `Приговор №${idx + 1}${dateStr}`;
     }
     
     if (node.type === 'virtual') {
+      if (!node.mergeOp) return '?';
       const parentLabel = getNodeLabel(node.parentNodeId);
       const basis = node.mergeOp.basis;
       return `Соединённый (${basis}) — основной: ${parentLabel}`;
