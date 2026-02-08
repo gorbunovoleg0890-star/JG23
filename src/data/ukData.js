@@ -470,6 +470,12 @@ export const punishmentTypes = [
     additional: false
   },
   {
+    id: 'restriction-of-freedom',
+    label: 'Ограничение свободы',
+    primary: true,
+    additional: true
+  },
+  {
     id: 'arrest',
     label: 'Арест',
     primary: true,
