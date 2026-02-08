@@ -2292,9 +2292,13 @@ export default function App() {
                           }
                         } else {
                           // Regular conviction: use existing eligibility logic
-                          const status = getConvictionRecidivismStatus(nodeInfo.conviction, entry.crime.date, []);
-                          eligible = status.eligible;
-                          reason = status.reason;
+                          if (nodeInfo.conviction) {
+                            const status = getConvictionRecidivismStatus(nodeInfo.conviction, entry.crime.date, []);
+                            eligible = status.eligible;
+                            reason = status.reason;
+                          } else {
+                            reason = 'Приговор не определён.';
+                          }
                         }
                       }
                       
