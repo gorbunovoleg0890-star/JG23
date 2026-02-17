@@ -113,6 +113,13 @@ const getJuvenileTerm = (category, isImprisonment) => {
   return { years: 1 };
 };
 
+const getEffectiveEndDate = (punishment) => {
+  if (!punishment) return '';
+  const mainEnd = punishment.udoDate || punishment.mainEndDate;
+  const additionalEnd = punishment.additionalEndDate;
+  return additionalEnd && additionalEnd > mainEnd ? additionalEnd : mainEnd;
+};
+
 const getPriorCrimes = (convictions) =>
   convictions.flatMap((conviction) =>
     conviction.crimes.map((crime) => ({ crime, conviction }))
@@ -443,6 +450,51 @@ export default function App() {
       conditionalValid &&
       defermentValid
     );
+  };
+
+  const getConvictionRecidivismStatus = (conviction, newCrimeDate) => {
+    if (!conviction) {
+      return { eligible: false, reason: 'Приговор не определён.' };
+    }
+
+    const crimes = conviction.crimes || [];
+    if (!crimes.length) {
+      return { eligible: false, reason: 'В приговоре не указаны преступления.' };
+    }
+
+    if (crimes.some((crime) => crime.juvenile)) {
+      return { eligible: false, reason: 'Не учитывается для рецидива: преступления совершены до 18 лет.' };
+    }
+
+    if (crimes.some((crime) => crime.intent !== 'умышленное')) {
+      return { eligible: false, reason: 'Не учитывается для рецидива: неумышленные преступления.' };
+    }
+
+    if (crimes.some((crime) => crime.category === 'небольшой тяжести')) {
+      return { eligible: false, reason: 'Не учитывается для рецидива: преступления небольшой тяжести.' };
+    }
+
+    const expungementDate = getConvictionExpungementDate(conviction);
+    if (expungementDate && newCrimeDate >= expungementDate) {
+      return {
+        eligible: false,
+        reason: `Судимость погашена на дату нового преступления (${formatDate(expungementDate)}).`
+      };
+    }
+
+    const punishment = getEffectivePunishment(conviction);
+    const nodeId = `conviction:${conviction.id}`;
+    const isAutoCancelled = isConditionalAutoCancelled(nodeId);
+
+    if (punishment.mainConditional && !punishment.conditionalCancelledDate && !isAutoCancelled) {
+      return { eligible: false, reason: 'Не учитывается для рецидива: условное осуждение.' };
+    }
+
+    if (punishment.deferment && !punishment.defermentCancelledDate) {
+      return { eligible: false, reason: 'Не учитывается для рецидива: отсрочка.' };
+    }
+
+    return { eligible: true, reason: 'Учитывается.' };
   };
 
   // Helper: Get all operations where a conviction is a child node

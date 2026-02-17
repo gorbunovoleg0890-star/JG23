@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "check:refs": "node scripts/checkUndefinedRefs.mjs",
     "preview": "vite preview",
     "build:ukdata": "node scripts/buildUkDataFromCsv.mjs",
     "electron:dev": "concurrently -k \"vite\" \"wait-on http://localhost:5173 && electron .\""
