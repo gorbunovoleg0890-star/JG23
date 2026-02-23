@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import themis from './assets/themis.svg';
 import lawBook from './assets/law-book.svg';
-import { createGorbunovPreset } from './presets/gorbunov';
+import { getPresetById, presetScenarios } from './presets/scenarios';
 import {
   crimeCategories,
   intentTypes,
@@ -113,6 +113,15 @@ const getJuvenileTerm = (category, isImprisonment) => {
   return { years: 1 };
 };
 
+const categoryOrder = ['небольшой тяжести', 'средней тяжести', 'тяжкое', 'особо тяжкое'];
+const getCategoryRank = (category) => categoryOrder.indexOf(category);
+const pickMostSevereCrime = (crimes = []) => {
+  if (!crimes.length) return null;
+  return crimes.reduce((maxCrime, currentCrime) =>
+    getCategoryRank(currentCrime.category) > getCategoryRank(maxCrime.category) ? currentCrime : maxCrime
+  , crimes[0]);
+};
+
 const getEffectiveEndDate = (punishment) => {
   if (!punishment) return '';
   const mainEnd = punishment.udoDate || punishment.mainEndDate;
@@ -145,24 +154,24 @@ const getRecidivismAssessment = (newCrime, eligibleEntries) => {
     };
   }
 
-  const severePrior = eligibleEntries.filter(
-    ({ crime }) => crime.category === 'тяжкое' || crime.category === 'особо тяжкое'
-  );
-  const mediumPrior = eligibleEntries.filter(
-    ({ crime }) => crime.category === 'средней тяжести'
-  );
   const realImprisonmentPrior = eligibleEntries.filter(
     ({ conviction }) => conviction.punishment.mainType === 'imprisonment' && conviction.punishment.mainReal
   );
+  const mediumImprisonmentPrior = realImprisonmentPrior.filter(
+    ({ crime }) => crime.category === 'средней тяжести'
+  );
   const severeImprisonmentPrior = realImprisonmentPrior.filter(
     ({ crime }) => crime.category === 'тяжкое' || crime.category === 'особо тяжкое'
+  );
+  const extraSevereImprisonmentPrior = realImprisonmentPrior.filter(
+    ({ crime }) => crime.category === 'особо тяжкое'
   );
   const heavyImprisonmentPrior = realImprisonmentPrior.filter(
     ({ crime }) => crime.category === 'тяжкое'
   );
 
   // ст.18 ч.3 п.б - особо тяжкое новое преступление + требуемые прошлые
-  if (newCrime.category === 'особо тяжкое' && (heavyImprisonmentPrior.length >= 2 || severeImprisonmentPrior.length >= 1)) {
+  if (newCrime.category === 'особо тяжкое' && (heavyImprisonmentPrior.length >= 2 || extraSevereImprisonmentPrior.length >= 1)) {
     return {
       type: 'Особо опасный рецидив',
       reason: 'Особо тяжкое новое преступление и тяжкие/особо тяжкие судимости с реальным наказанием (ч. 3 ст. 18 УК РФ).',
@@ -180,7 +189,7 @@ const getRecidivismAssessment = (newCrime, eligibleEntries) => {
   }
 
   // ст.18 ч.2 - два средней тяжести + реальное или тяжкое/особо тяжкое
-  if (newCrime.category === 'тяжкое' && mediumPrior.length >= 2 && realImprisonmentPrior.length >= 2) {
+  if (newCrime.category === 'тяжкое' && mediumImprisonmentPrior.length >= 2) {
     return {
       type: 'Опасный рецидив',
       reason: 'Два и более умышленных преступления средней тяжести с лишением свободы (ч. 2 ст. 18 УК РФ).',
@@ -189,7 +198,7 @@ const getRecidivismAssessment = (newCrime, eligibleEntries) => {
   }
 
   // ст.18 ч.2 - тяжкое новое + хотя бы одно тяжкое/особо тяжкое
-  if (newCrime.category === 'тяжкое' && severePrior.length >= 1) {
+  if (newCrime.category === 'тяжкое' && severeImprisonmentPrior.length >= 1) {
     return {
       type: 'Опасный рецидив',
       reason: 'Новое тяжкое преступление при наличии тяжкой/особо тяжкой судимости (ч. 2 ст. 18 УК РФ).',
@@ -315,12 +324,16 @@ export default function App() {
     if (!node) return [];
     if (node.type === 'base') return [node.conviction];
     
-    // Virtual node: recursively get from children
+    // Virtual node: recursively get from parent + children, without duplicates
     const result = [];
-    node.childNodeIds.forEach((childId) => {
+    const sourceNodeIds = [node.parentNodeId, ...(node.childNodeIds || [])].filter(Boolean);
+    sourceNodeIds.forEach((childId) => {
       result.push(...getUnderlyingConvictions(childId));
     });
-    return result;
+    return result.filter(
+      (conviction, index, list) =>
+        conviction && list.findIndex((candidate) => candidate.id === conviction.id) === index
+    );
   };
 
   // Get all underlying crimes for category calculation
@@ -332,7 +345,6 @@ export default function App() {
   // Get max category from all underlying crimes
   const getMaxCategory = (nodeId) => {
     const crimes = getUnderlyingCrimes(nodeId);
-    const categoryOrder = ['небольшой тяжести', 'средней тяжести', 'тяжкое', 'особо тяжкое'];
     const maxIndex = Math.max(...crimes.map(c => categoryOrder.indexOf(c.category)), -1);
     return maxIndex >= 0 ? categoryOrder[maxIndex] : 'средней тяжести';
   };
@@ -682,12 +694,15 @@ export default function App() {
 
   // Create merge operation
   const createMergeOp = () => {
-    if (creatingOp.childNodeIds.length < 2 || !creatingOp.parentNodeId) return;
+    const normalizedChildNodeIds = creatingOp.childNodeIds.filter(
+      (nodeId) => nodeId !== creatingOp.parentNodeId
+    );
+    if (normalizedChildNodeIds.length < 1 || !creatingOp.parentNodeId) return;
     
     const newOp = {
       id: crypto.randomUUID(),
       basis: creatingOp.basis,
-      childNodeIds: creatingOp.childNodeIds,
+      childNodeIds: normalizedChildNodeIds,
       parentNodeId: creatingOp.parentNodeId,
       mergedPunishment: {
         mainType: 'imprisonment',
@@ -953,6 +968,8 @@ export default function App() {
 
         // Base conviction: всегда учитывается, если не consumed
         if (node.type === 'base') {
+          // Parent nodes are represented by virtual merge result and must not be counted separately.
+          if (getParentOperation(node.conviction.id)) return;
           const underlyingCrimes = node.conviction.crimes;
           nodesToConsiderForRecidivism.push({
             nodeId,
@@ -1031,9 +1048,10 @@ export default function App() {
         }
 
         // Все проверки пройдены - этот узел учитывается для рецидива
-        const crimeForRecidivism = node.type === 'base' 
-          ? node.conviction.crimes[0] 
-          : crimes[0]; // первое преступление из underlying
+        const crimeForRecidivism = pickMostSevereCrime(
+          node.type === 'base' ? node.conviction.crimes : crimes
+        );
+        if (!crimeForRecidivism) return;
         
         const punishment = node.type === 'base'
           ? node.conviction.punishment
@@ -1236,26 +1254,26 @@ export default function App() {
 
   // Load test scenario preset
   const loadPreset = (presetId) => {
-    if (presetId === 1) {
-      // Load Gorbunov's baseline scenario
-      const preset = createGorbunovPreset();
-      
-      setBirthDate(preset.birthDate);
-      setNewCrimes(preset.newCrimes);
-      setConvictions(preset.convictions);
-      setMergeOps(preset.mergeOps);
-      setCreatingOp(preset.creatingOp);
-      
-      // Update URL without reload
-      window.history.replaceState({}, '', '?preset=1');
-    }
+    const scenario = getPresetById(presetId);
+    if (!scenario) return;
+    const preset = scenario.factory();
+    
+    setBirthDate(preset.birthDate);
+    setNewCrimes(preset.newCrimes);
+    setConvictions(preset.convictions);
+    setMergeOps(preset.mergeOps);
+    setCreatingOp(preset.creatingOp);
+    
+    // Update URL without reload
+    window.history.replaceState({}, '', `?preset=${scenario.id}`);
   };
 
   // Load preset from URL on mount
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get('preset') === '1') {
-      loadPreset(1);
+    const presetParam = params.get('preset');
+    if (presetParam) {
+      loadPreset(presetParam);
     }
   }, []); // Empty dependency array: runs only once on mount
 
@@ -1277,13 +1295,19 @@ export default function App() {
                 <h1 className="text-4xl font-semibold text-white">
                   «Калькулятор рецидива»
                 </h1>
-                <button
-                  onClick={() => loadPreset(1)}
-                  className="ml-4 whitespace-nowrap rounded-xl bg-accent-500/20 px-3 py-2 text-sm text-accent-200 border border-accent-500/40 hover:bg-accent-500/30 transition-colors"
-                  title="Загрузить тестовый сценарий с примером данных"
-                >
-                  📋 Загрузить тестовый сценарий
-                </button>
+                <div className="ml-4 flex flex-wrap gap-2">
+                  {presetScenarios.map((scenario) => (
+                    <button
+                      key={scenario.id}
+                      onClick={() => loadPreset(scenario.id)}
+                      className="whitespace-nowrap rounded-xl bg-accent-500/20 px-3 py-2 text-sm text-accent-200 border border-accent-500/40 hover:bg-accent-500/30 transition-colors"
+                      title={scenario.label}
+                    >
+                      {scenario.id === 1 ? '📋 ' : ''}
+                      Preset {scenario.id}
+                    </button>
+                  ))}
+                </div>
               </div>
               <p className="max-w-2xl text-sm text-law-100/90">
                 Заполните данные по новым преступлениям и предыдущим приговорам, чтобы

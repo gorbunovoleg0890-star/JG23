@@ -368,3 +368,155 @@ export function createGorbunovPreset() {
     }
   };
 }
+
+export function createNoRecidivismPreset() {
+  return {
+    birthDate: '1985-05-10',
+    newCrimes: [
+      {
+        id: 'crime-no-rec-1',
+        date: '2026-06-01',
+        articleId: '158',
+        partId: '2',
+        pointId: '',
+        category: 'средней тяжести',
+        intent: 'умышленное'
+      }
+    ],
+    convictions: [
+      {
+        id: 'conv-no-rec-1',
+        verdictDate: '2018-02-01',
+        legalDate: '2018-03-01',
+        pre2013: false,
+        crimes: [
+          {
+            id: 'crime-conv-no-rec-1',
+            date: '2018-01-15',
+            articleId: '158',
+            partId: '2',
+            pointId: '',
+            category: 'средней тяжести',
+            intent: 'умышленное',
+            juvenile: false
+          }
+        ],
+        punishment: {
+          mainType: 'imprisonment',
+          mainReal: true,
+          mainConditional: false,
+          mainTermYears: 2,
+          mainTermMonths: 0,
+          conditionalCancelledDate: '',
+          probationYears: 0,
+          probationMonths: 0,
+          deferment: false,
+          defermentCancelledDate: '',
+          udoDate: '',
+          mainEndDate: '2020-01-01',
+          additionalType: '',
+          additionalEndDate: ''
+        }
+      }
+    ],
+    mergeOps: [],
+    creatingOp: {
+      basis: 'ч. 5 ст. 69 УК РФ',
+      childNodeIds: [],
+      parentNodeId: ''
+    }
+  };
+}
+
+export function createDangerousRecidivismPreset() {
+  return {
+    birthDate: '1980-09-21',
+    newCrimes: [
+      {
+        id: 'crime-danger-1',
+        date: '2026-05-10',
+        articleId: '161',
+        partId: '2',
+        pointId: '',
+        category: 'тяжкое',
+        intent: 'умышленное'
+      }
+    ],
+    convictions: [
+      {
+        id: 'conv-danger-1',
+        verdictDate: '2022-01-10',
+        legalDate: '2022-02-01',
+        pre2013: false,
+        crimes: [
+          {
+            id: 'crime-conv-danger-1',
+            date: '2021-10-01',
+            articleId: '158',
+            partId: '2',
+            pointId: '',
+            category: 'средней тяжести',
+            intent: 'умышленное',
+            juvenile: false
+          }
+        ],
+        punishment: {
+          mainType: 'imprisonment',
+          mainReal: true,
+          mainConditional: false,
+          mainTermYears: 1,
+          mainTermMonths: 6,
+          conditionalCancelledDate: '',
+          probationYears: 0,
+          probationMonths: 0,
+          deferment: false,
+          defermentCancelledDate: '',
+          udoDate: '',
+          mainEndDate: '2024-01-01',
+          additionalType: '',
+          additionalEndDate: ''
+        }
+      },
+      {
+        id: 'conv-danger-2',
+        verdictDate: '2023-03-10',
+        legalDate: '2023-04-01',
+        pre2013: false,
+        crimes: [
+          {
+            id: 'crime-conv-danger-2',
+            date: '2023-01-15',
+            articleId: '159',
+            partId: '3',
+            pointId: '',
+            category: 'средней тяжести',
+            intent: 'умышленное',
+            juvenile: false
+          }
+        ],
+        punishment: {
+          mainType: 'imprisonment',
+          mainReal: true,
+          mainConditional: false,
+          mainTermYears: 2,
+          mainTermMonths: 0,
+          conditionalCancelledDate: '',
+          probationYears: 0,
+          probationMonths: 0,
+          deferment: false,
+          defermentCancelledDate: '',
+          udoDate: '',
+          mainEndDate: '2025-02-01',
+          additionalType: '',
+          additionalEndDate: ''
+        }
+      }
+    ],
+    mergeOps: [],
+    creatingOp: {
+      basis: 'ч. 5 ст. 69 УК РФ',
+      childNodeIds: [],
+      parentNodeId: ''
+    }
+  };
+}
