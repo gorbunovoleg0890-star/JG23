@@ -214,21 +214,26 @@ const getRecidivismAssessment = (newCrime, eligibleEntries) => {
   };
 };
 
-const SectionCard = ({ title, icon: Icon, children }) => (
-  <section className="glass-panel rounded-3xl p-6 space-y-6">
-    <div className="flex items-center gap-3">
-      <span className="rounded-full bg-law-200/20 p-2 text-law-100">
-        <Icon className="h-5 w-5" />
-      </span>
-      <h2 className="section-title">{title}</h2>
+const SectionCard = ({ title, icon: Icon, hint, children }) => (
+  <section className="glass-panel rounded-3xl p-6 space-y-6 md:p-7">
+    <div className="section-head">
+      <div className="flex items-start gap-3">
+        <span className="rounded-full border border-sky-300/30 bg-sky-400/15 p-2 text-sky-100 shadow-sm">
+          <Icon className="h-5 w-5" />
+        </span>
+        <div>
+          <h2 className="section-title">{title}</h2>
+          {hint && <p className="section-hint">{hint}</p>}
+        </div>
+      </div>
     </div>
     {children}
   </section>
 );
 
 const Field = ({ label, children }) => (
-  <label className="flex flex-col gap-2 text-sm text-law-100">
-    <span className="font-medium">{label}</span>
+  <label className="flex flex-col gap-2 text-sm text-law-50/90">
+    <span className="text-sm font-semibold">{label}</span>
     {children}
   </label>
 );
@@ -237,7 +242,7 @@ const Select = ({ value, onChange, options, placeholder }) => (
   <select
     value={value}
     onChange={onChange}
-    className="rounded-xl border border-law-200/40 bg-white px-3 py-2 text-sm shadow-sm"
+    className="rounded-xl px-3 py-2 text-sm shadow-sm"
   >
     <option value="">{placeholder}</option>
     {options.map((option) => (
@@ -1278,7 +1283,7 @@ export default function App() {
   }, []); // Empty dependency array: runs only once on mount
 
   return (
-    <div className="min-h-screen bg-law-gradient">
+    <div className="app-shell min-h-screen">
       <div className="relative overflow-hidden">
         <div className="absolute inset-0 opacity-15">
           <div className="absolute -top-20 -left-10 h-80 w-80 rounded-full bg-law-200 blur-3xl" />
@@ -1287,12 +1292,12 @@ export default function App() {
         <header className="relative z-10 mx-auto flex max-w-6xl flex-col gap-8 px-6 pb-10 pt-16">
           <div className="flex flex-wrap items-start justify-between gap-6">
             <div className="space-y-4">
-              <div className="inline-flex items-center gap-2 rounded-full bg-law-200/20 px-4 py-2 text-sm text-law-100">
+              <div className="inline-flex items-center gap-2 rounded-full border border-law-200/30 bg-law-200/20 px-4 py-2 text-sm text-law-100 shadow-sm">
                 <Gavel className="h-6 w-6" />
                 Юридический калькулятор
               </div>
               <div className="flex items-center gap-3">
-                <h1 className="text-4xl font-semibold text-white">
+                <h1 className="text-4xl font-semibold leading-tight text-white md:text-5xl">
                   «Калькулятор рецидива»
                 </h1>
                 <div className="ml-4 flex flex-wrap gap-2">
@@ -1300,10 +1305,9 @@ export default function App() {
                     <button
                       key={scenario.id}
                       onClick={() => loadPreset(scenario.id)}
-                      className="whitespace-nowrap rounded-xl bg-accent-500/20 px-3 py-2 text-sm text-accent-200 border border-accent-500/40 hover:bg-accent-500/30 transition-colors"
+                      className="whitespace-nowrap rounded-xl border border-sky-300/40 bg-sky-400/10 px-3 py-2 text-sm text-sky-100 hover:bg-sky-400/20"
                       title={scenario.label}
                     >
-                      {scenario.id === 1 ? '📋 ' : ''}
                       Preset {scenario.id}
                     </button>
                   ))}
@@ -1345,12 +1349,16 @@ export default function App() {
       </div>
 
       <main className="mx-auto flex max-w-6xl flex-col gap-8 px-6 pb-20">
-        <SectionCard title="I. Новые преступления" icon={CalendarDays}>
+        <SectionCard
+          title="I. Новые преступления"
+          icon={CalendarDays}
+          hint="Заполните дату, статью, категорию и форму вины для каждого нового преступления."
+        >
           <div className="space-y-6">
             {newCrimes.map((crime, index) => (
-              <div key={crime.id} className="rounded-2xl border border-white/10 bg-white/5 p-4">
+              <div key={crime.id} className="soft-card bg-white/5">
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                  <h3 className="text-sm font-semibold text-white">
+                  <h3 className="text-sm font-semibold tracking-wide text-white">
                     Преступление №{index + 1}
                   </h3>
                   {newCrimes.length > 1 && (
@@ -1438,7 +1446,7 @@ export default function App() {
               </div>
             ))}
             <button
-              className="flex items-center gap-2 rounded-xl border border-law-200/50 bg-law-200/20 px-4 py-2 text-sm text-law-100"
+              className="flex items-center gap-2 rounded-xl border border-law-200/50 bg-law-200/20 px-4 py-2 text-sm font-medium text-law-100 hover:bg-law-200/30"
               onClick={() => setNewCrimes((prev) => [...prev, emptyCrime()])}
             >
               <Plus className="h-4 w-4" /> Добавить дату/статью
@@ -1450,7 +1458,11 @@ export default function App() {
           </div>
         </SectionCard>
 
-        <SectionCard title="III. Дата рождения подсудимого" icon={ClipboardList}>
+        <SectionCard
+          title="III. Дата рождения подсудимого"
+          icon={ClipboardList}
+          hint="Используется для проверки возраста на дату совершения преступления."
+        >
           <div className="grid gap-4 md:grid-cols-2">
             <Field label="Дата рождения">
               <input
@@ -1460,14 +1472,18 @@ export default function App() {
                 className="rounded-xl border border-law-200/40 bg-white px-3 py-2 text-sm"
               />
             </Field>
-            <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-law-100/80">
+            <div className="soft-card text-sm text-law-100/80">
               Дата рождения используется для проверки совершения преступлений в
               несовершеннолетнем возрасте и расчета сроков погашения судимости.
             </div>
           </div>
         </SectionCard>
 
-        <SectionCard title="IV. Судимости по предыдущим приговорам" icon={FileText}>
+        <SectionCard
+          title="IV. Судимости по предыдущим приговорам"
+          icon={FileText}
+          hint="Укажите приговоры, наказания и операции соединения по ст. 69/70/74 УК РФ."
+        >
           <div className="space-y-6">
             {convictions.map((conviction, index) => {
               const nodeId = `conviction:${conviction.id}`;
@@ -1484,16 +1500,16 @@ export default function App() {
               });
 
               return (
-                <div key={conviction.id} className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <div key={conviction.id} className="soft-card bg-white/5">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <h3 className="text-sm font-semibold text-white">Приговор №{index + 1}</h3>
                     {consumingOp && (
-                      <span className="ml-3 inline-block rounded-full bg-law-200/20 px-2 py-1 text-xs text-law-100">
+                      <span className="status-chip ml-3 border-law-200/30 bg-law-200/20 text-law-100">
                         Влился в соединение (основной: {getNodeLabel(consumingOp.parentNodeId)})
                       </span>
                     )}
                     {parentOps.length > 0 && (
-                      <span className="ml-3 inline-block rounded-full bg-accent-500/20 px-2 py-1 text-xs text-accent-200">
+                      <span className="status-chip ml-3 border-sky-300/40 bg-sky-400/15 text-sky-100">
                         Основной для соединения{parentOps.length > 1 ? 'й' : ''}
                       </span>
                     )}
@@ -2008,13 +2024,13 @@ export default function App() {
               );
             })}
             <button
-              className="flex items-center gap-2 rounded-xl border border-law-200/50 bg-law-200/20 px-4 py-2 text-sm text-law-100"
+              className="flex items-center gap-2 rounded-xl border border-law-200/50 bg-law-200/20 px-4 py-2 text-sm font-medium text-law-100 hover:bg-law-200/30"
               onClick={() => setConvictions((prev) => [...prev, emptyConviction()])}
             >
               <Plus className="h-4 w-4" /> Добавить приговор
             </button>
 
-            <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-4">
+            <div className="soft-card bg-white/5 space-y-4">
               <h3 className="text-sm font-semibold text-white">Операции соединения приговоров</h3>
               
               {/* Форма создания новой операции */}
@@ -2088,7 +2104,7 @@ export default function App() {
 
                 <div className="flex gap-3">
                   <button
-                    className="flex items-center gap-2 rounded-xl border border-law-200/50 bg-law-200/20 px-4 py-2 text-sm text-law-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex items-center gap-2 rounded-xl border border-law-200/50 bg-law-200/20 px-4 py-2 text-sm font-medium text-law-100 disabled:cursor-not-allowed disabled:opacity-50 hover:bg-law-200/30"
                     onClick={createMergeOp}
                     disabled={creatingOp.childNodeIds.length < 2 || !creatingOp.parentNodeId}
                   >
@@ -2240,10 +2256,14 @@ export default function App() {
           </div>
         </SectionCard>
 
-        <SectionCard title="V. Наличие рецидива" icon={Gavel}>
+        <SectionCard
+          title="V. Наличие рецидива"
+          icon={Gavel}
+          hint="Краткая строка по каждому узлу и раскрытие деталей по кнопке."
+        >
           <div className="space-y-6">
             {recidivismReport.map((entry, index) => (
-              <div key={entry.crime.id} className="rounded-2xl border border-white/10 bg-white/5 p-4">
+              <div key={entry.crime.id} className="soft-card bg-white/5">
                 {/* Информация о новом преступлении */}
                 <div className="pb-4 border-b border-white/10">
                   <h3 className="text-sm font-semibold text-white">
@@ -2331,115 +2351,139 @@ export default function App() {
                       }
                       
 
+                      const statusLabel = hasConsumingOp
+                        ? 'Не оценивается отдельно'
+                        : eligible
+                          ? 'Учитывается'
+                          : reason
+                            ? 'Не учитывается'
+                            : 'Требует данных';
+                      const statusClass = hasConsumingOp
+                        ? 'status-chip status-chip-merged'
+                        : eligible
+                          ? 'status-chip status-chip-eligible'
+                          : reason
+                            ? 'status-chip status-chip-not-eligible'
+                            : 'status-chip status-chip-pending';
+
                       return (
-                        <div key={nodeInfo.nodeId} className="rounded-lg border border-law-200/40 bg-white/8 p-4 text-sm">
-                          {/* A) Шапка */}
-                          <div className="font-semibold text-law-100 mb-3 text-base">{nodeLabel}</div>
-
-                          {/* Реквизиты */}
-                          {nodeInfo.isVirtualNode ? (
-                            <div className="text-law-100/90 mb-3 text-xs">
-                              <div><strong>Основание соединения:</strong> {nodeInfo.parentOp?.basis || '—'}</div>
-                              <div><strong>Основной узел:</strong> {nodeInfo.parentConvictionIdx >= 0 ? `Приговор №${nodeInfo.parentConvictionIdx + 1}` : '—'}</div>
+                        <div key={nodeInfo.nodeId} className="rounded-xl border border-sky-200/30 bg-slate-900/45 p-4 text-sm">
+                          <div className="node-summary">
+                            <div>
+                              <div className="text-base font-semibold text-sky-50">{nodeLabel}</div>
+                              <div className="mt-1 text-xs text-sky-100/80">
+                                Погашение:{' '}
+                                {effectiveExpungementDate
+                                  ? formatDate(effectiveExpungementDate)
+                                  : 'не рассчитана'}{' '}
+                                {nodeInfo.isVirtualNode
+                                  ? `· Основание: ${nodeInfo.parentOp?.basis || '—'}`
+                                  : ''}
+                              </div>
                             </div>
-                          ) : (
-                            <div className="text-law-100/90 mb-3 text-xs">
-                              <div><strong>Дата приговора:</strong> {nodeInfo.conviction?.verdictDate ? formatDate(nodeInfo.conviction.verdictDate) : '—'}</div>
-                              <div><strong>Дата вступления в силу:</strong> {nodeInfo.conviction?.legalDate ? formatDate(nodeInfo.conviction.legalDate) : '—'}</div>
-                            </div>
-                          )}
+                            <span className={statusClass}>{statusLabel}</span>
+                          </div>
 
-                          {/* Преступления */}
-                          {!nodeInfo.isVirtualNode && (
-                            <div className="mb-3 pb-3 border-b border-law-200/20">
-                              <div className="text-law-100/90 mb-2"><strong>Преступления по приговору:</strong></div>
-                              {nodeInfo.conviction?.crimes?.map((crime, idx) => (
-                                <div key={crime.id} className="text-law-100/80 text-xs mb-1">
-                                  Дата совершения: {formatDate(crime.date)} · Статья: {formatArticleRef(crime)} · Категория: {crime.category} · Вина: {crime.intent}
+                          <div className="mb-3 text-xs text-sky-100/80">
+                            {nodeInfo.nodeRecidivismStatus.hasRecidivism
+                              ? `Рецидив по узлу: ДА — ${nodeInfo.nodeRecidivismStatus.reason}`
+                              : `Рецидив по узлу: НЕТ — ${nodeInfo.nodeRecidivismStatus.reason}`}
+                          </div>
+
+                          <details className="rounded-xl border border-sky-200/20 bg-slate-900/40 p-3">
+                            <summary className="cursor-pointer text-sm font-semibold text-sky-100">
+                              Показать детали
+                            </summary>
+                            <div className="mt-3 space-y-3">
+                              {/* Реквизиты */}
+                              {nodeInfo.isVirtualNode ? (
+                                <div className="text-law-100/90 mb-3 text-xs">
+                                  <div><strong>Основание соединения:</strong> {nodeInfo.parentOp?.basis || '—'}</div>
+                                  <div><strong>Основной узел:</strong> {nodeInfo.parentConvictionIdx >= 0 ? `Приговор №${nodeInfo.parentConvictionIdx + 1}` : '—'}</div>
                                 </div>
-                              )) || <div className="text-law-100/80 text-xs">Не определены</div>}
-                            </div>
-                          )}
-                          {nodeInfo.isVirtualNode && (
-                            <div className="mb-3 pb-3 border-b border-law-200/20">
-                              <div className="text-law-100/90 mb-2"><strong>Соединённые преступления:</strong></div>
-                              {getUnderlyingCrimes(nodeInfo.nodeId).map((crime, idx) => (
-                                <div key={`${nodeInfo.nodeId}-crime-${idx}`} className="text-law-100/80 text-xs mb-1">
-                                  Дата: {formatDate(crime.date)} · Статья: {formatArticleRef(crime)} · Категория: {crime.category}
+                              ) : (
+                                <div className="text-law-100/90 mb-3 text-xs">
+                                  <div><strong>Дата приговора:</strong> {nodeInfo.conviction?.verdictDate ? formatDate(nodeInfo.conviction.verdictDate) : '—'}</div>
+                                  <div><strong>Дата вступления в силу:</strong> {nodeInfo.conviction?.legalDate ? formatDate(nodeInfo.conviction.legalDate) : '—'}</div>
                                 </div>
-                              )) || <div className="text-law-100/80 text-xs">Не определены</div>}
-                            </div>
-                          )}
+                              )}
 
-                          {/* Наказание (основное и доп.) */}
-                          <div className="mb-3 pb-3 border-b border-law-200/20 text-law-100/90">
-                            <div className="mb-2"><strong>Наказание:</strong></div>
-                            <div className="text-law-100/80 text-xs mb-1">Основное: {nodeInfo.punishmentLabel}</div>
-                            {nodeInfo.punishment && nodeInfo.punishment.mainType === 'imprisonment' && (
-                              <div className="text-law-100/80 text-xs mb-1">Срок: {nodeInfo.punishment.mainTermYears || 0} лет {nodeInfo.punishment.mainTermMonths || 0} мес</div>
-                            )}
-                            {nodeInfo.isConditional && (
-                              <div className="text-law-100/80 text-xs mb-1">Условное осуждение: да
-                                {(!nodeInfo.autoCancelledConditional && nodeInfo.punishment && (nodeInfo.punishment.probationYears || nodeInfo.punishment.probationMonths)) && (
-                                  <span>: испытательный срок {nodeInfo.punishment.probationYears || 0} лет {nodeInfo.punishment.probationMonths || 0} мес</span>
+                              {/* Преступления */}
+                              {!nodeInfo.isVirtualNode && (
+                                <div className="mb-3 pb-3 border-b border-law-200/20">
+                                  <div className="text-law-100/90 mb-2"><strong>Преступления по приговору:</strong></div>
+                                  {nodeInfo.conviction?.crimes?.map((crime) => (
+                                    <div key={crime.id} className="text-law-100/80 text-xs mb-1">
+                                      Дата совершения: {formatDate(crime.date)} · Статья: {formatArticleRef(crime)} · Категория: {crime.category} · Вина: {crime.intent}
+                                    </div>
+                                  )) || <div className="text-law-100/80 text-xs">Не определены</div>}
+                                </div>
+                              )}
+                              {nodeInfo.isVirtualNode && (
+                                <div className="mb-3 pb-3 border-b border-law-200/20">
+                                  <div className="text-law-100/90 mb-2"><strong>Соединённые преступления:</strong></div>
+                                  {getUnderlyingCrimes(nodeInfo.nodeId).map((crime, idx) => (
+                                    <div key={`${nodeInfo.nodeId}-crime-${idx}`} className="text-law-100/80 text-xs mb-1">
+                                      Дата: {formatDate(crime.date)} · Статья: {formatArticleRef(crime)} · Категория: {crime.category}
+                                    </div>
+                                  )) || <div className="text-law-100/80 text-xs">Не определены</div>}
+                                </div>
+                              )}
+
+                              {/* Наказание (основное и доп.) */}
+                              <div className="mb-3 pb-3 border-b border-law-200/20 text-law-100/90">
+                                <div className="mb-2"><strong>Наказание:</strong></div>
+                                <div className="text-law-100/80 text-xs mb-1">Основное: {nodeInfo.punishmentLabel}</div>
+                                {nodeInfo.punishment && nodeInfo.punishment.mainType === 'imprisonment' && (
+                                  <div className="text-law-100/80 text-xs mb-1">Срок: {nodeInfo.punishment.mainTermYears || 0} лет {nodeInfo.punishment.mainTermMonths || 0} мес</div>
+                                )}
+                                {nodeInfo.isConditional && (
+                                  <div className="text-law-100/80 text-xs mb-1">Условное осуждение: да
+                                    {(!nodeInfo.autoCancelledConditional && nodeInfo.punishment && (nodeInfo.punishment.probationYears || nodeInfo.punishment.probationMonths)) && (
+                                      <span>: испытательный срок {nodeInfo.punishment.probationYears || 0} лет {nodeInfo.punishment.probationMonths || 0} мес</span>
+                                    )}
+                                  </div>
+                                )}
+
+                                {nodeInfo.punishment && nodeInfo.punishment.udoDate && (
+                                  <div className="text-law-100/80 text-xs mb-1">УДО: дата {formatDate(nodeInfo.punishment.udoDate)}</div>
+                                )}
+
+                                {nodeInfo.punishment && nodeInfo.punishment.additionalType ? (
+                                  <div className="text-law-100/80 text-xs">Доп. наказание: {punishmentTypes.find(pt => pt.id === nodeInfo.punishment.additionalType)?.label || nodeInfo.punishment.additionalType} — дата отбытия: {nodeInfo.punishment.additionalEndDate ? formatDate(nodeInfo.punishment.additionalEndDate) : '—'}</div>
+                                ) : (
+                                  <div className="text-law-100/80 text-xs">Доп. наказание: нет</div>
+                                )}
+
+                                <div className="text-law-100/80 text-xs mt-2">
+                                  <strong>Дата отбытия/окончания исполнения:</strong>{' '}
+                                  {endDate ? (
+                                    <span>{formatDate(endDate)}{nodeInfo.isVirtualNode ? <span className="text-law-100/70 ml-2">(по результату операции {nodeInfo.parentOp?.basis})</span> : (hasConsumingOp && nodeInfo.consumingOp ? <span className="text-law-100/70 ml-2">(по операции)</span> : <span className="text-law-100/70 ml-2">(по приговору)</span>)}</span>
+                                  ) : (
+                                    hasConsumingOp && nodeInfo.consumingOp && nodeInfo.consumingOp.basis.includes('69')
+                                      ? <span>см. основной узел (по ч.5 ст.69)</span>
+                                      : <em className="text-law-100/70">не заполнена дата окончания наказания</em>
+                                  )}
+                                </div>
+
+                                {nodeInfo.autoCancelledConditional && (
+                                  <div className="text-law-100/70 text-xs mt-1 italic">
+                                    ℹ️ Условное осуждение отменено (ст. 74 УК РФ); наказание присоединено к основному узлу (ст. 70 УК РФ).
+                                  </div>
+                                )}
+
+                                {hasConsumingOp && nodeInfo.consumingOp && nodeInfo.consumingOp.basis.includes('70') && (
+                                  <div className="text-law-100/70 text-xs mt-1 italic">
+                                    ℹ️ Даты исполнения определяются результатом операции ст.70/74.
+                                  </div>
                                 )}
                               </div>
-                            )}
-                            
-                            {/* УДО информация */}
-                            {nodeInfo.punishment && nodeInfo.punishment.udoDate && (
-                              <div className="text-law-100/80 text-xs mb-1">УДО: дата {formatDate(nodeInfo.punishment.udoDate)}</div>
-                            )}
-                            
-                            {/* Доп. наказание информация */}
-                            {nodeInfo.punishment && nodeInfo.punishment.additionalType ? (
-                              <div className="text-law-100/80 text-xs">Доп. наказание: {punishmentTypes.find(pt => pt.id === nodeInfo.punishment.additionalType)?.label || nodeInfo.punishment.additionalType} — дата отбытия: {nodeInfo.punishment.additionalEndDate ? formatDate(nodeInfo.punishment.additionalEndDate) : '—'}</div>
-                            ) : (
-                              <div className="text-law-100/80 text-xs">Доп. наказание: нет</div>
-                            )}
 
-                            {/* Дата отбытия наказания */}
-                            <div className="text-law-100/80 text-xs mt-2">
-                              <strong>Дата отбытия/окончания исполнения:</strong>{' '}
-                              {endDate ? (
-                                <span>{formatDate(endDate)}{nodeInfo.isVirtualNode ? <span className="text-law-100/70 ml-2">(по результату операции {nodeInfo.parentOp?.basis})</span> : (hasConsumingOp && nodeInfo.consumingOp ? <span className="text-law-100/70 ml-2">(по операции)</span> : <span className="text-law-100/70 ml-2">(по приговору)</span>)}</span>
-                              ) : (
-                                hasConsumingOp && nodeInfo.consumingOp && nodeInfo.consumingOp.basis.includes('69')
-                                  ? <span>см. основной узел (по ч.5 ст.69)</span>
-                                  : <em className="text-law-100/70">не заполнена дата окончания наказания</em>
-                              )}
+                              <div className="text-xs text-sky-100/80">
+                                <strong>Статус для текущего нового преступления:</strong> {reason || 'Требуются дополнительные данные.'}
+                              </div>
                             </div>
-
-                            {nodeInfo.autoCancelledConditional && (
-                              <div className="text-law-100/70 text-xs mt-1 italic">
-                                ℹ️ Условное осуждение отменено (ст. 74 УК РФ); наказание присоединено к основному узлу (ст. 70 УК РФ).
-                              </div>
-                            )}
-                            
-                            {hasConsumingOp && nodeInfo.consumingOp && nodeInfo.consumingOp.basis.includes('70') && (
-                              <div className="text-law-100/70 text-xs mt-1 italic">
-                                ℹ️ Даты исполнения определяются результатом операции ст.70/74.
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Дата погашения судимости */}
-                          <div className="mb-3 pb-3 border-b border-law-200/20 text-law-100/90">
-                            <strong>Дата погашения судимости:</strong>{' '}
-                            {effectiveExpungementDate 
-                              ? <span className="text-law-100/80">{formatDate(effectiveExpungementDate)}</span>
-                              : <em className="text-law-100/70">не рассчитана (не заполнена дата окончания наказания)</em>
-                            }
-                          </div>
-
-                          {/* Рецидив по этому узлу */}
-                          <div className="text-law-100/80 text-xs mt-4 pt-4 border-t border-law-200/20">
-                            <strong>Рецидив по этому узлу:</strong>{' '}
-                            {nodeInfo.nodeRecidivismStatus.hasRecidivism 
-                              ? <span className="text-accent-200 font-semibold">ДА — {nodeInfo.nodeRecidivismStatus.reason}</span>
-                              : <span>НЕТ — {nodeInfo.nodeRecidivismStatus.reason}</span>
-                            }
-                          </div>
+                          </details>
                         </div>
                       );
                     })}
